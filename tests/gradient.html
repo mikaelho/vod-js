@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+	<title>Paperoids</title>
+	<script type="text/javascript" src="../lib/paper.js"></script>
+	<script type="text/paperscript" canvas="canvas">
+var point = new Point(20, 20);
+var size = new Size(60, 60);
+var path = new Path.Rectangle(point, size);
+path.strokeColor = 'black';
+path.fillColor = 'blue';
+
+path.clicked = function(event) {
+	alert("clicked");
+}
+
+/*
+// Alternative 1
+path.on({
+	mouseup: function(event) { this.clicked(event); }
+});
+*/
+
+// Alternative 2
+function onMouseUp(event) {
+	if (event.item) {
+		event.item.clicked(event);
+	}
+}
+
+	</script>
+</head>
+<body style="background:white">
+	<canvas style="position:absolute" id="canvas" resize stats></canvas>
+</body>
+</html>

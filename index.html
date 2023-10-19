@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+	<title>VoD</title>
+	<!--<script type="text/javascript" src="lib/jquery-1.10.2.min.js"></script>-->
+	<script type="text/javascript" src="lib/jquery-2.0.3.min.js"></script>
+	<script type="text/javascript" src="lib/jquery.transit.min.js"></script>
+	<script type="text/javascript" src="lib/paper.js"></script>
+	<script type="text/javascript" src="lib/Box2dWeb-2.1.a.3.js"></script>
+	<script type="text/javascript" src="lib/Modernizr-touch.js"></script>
+	<!--<script type="text/javascript" src="lib/zui53-0.0.2.js"></script>-->
+
+<script type="text/javascript" src="src/vod-box2d.js"></script>
+<script type="text/javascript" src="src/vod-util.js"></script>
+<script type="text/javascript" src="src/vod-playfield.js"></script>
+<!--<script type="text/javascript" src="src/vod-timeline.js"></script>-->
+<script type="text/javascript" src="src/vod-main.js"></script>
+</head>
+<body background="assets/spacetile2.png" style='width:100%; height:100%; margin: 0; padding: 0; overflow:hidden'>
+	<div id="debug" style="position: absolute; top: 0; left: 0; color: white"></div>
+	<div id="viewport" style='position: absolute; top: 0; left: 0; width:100%; height:100%; margin: 0; padding: 0; overflow:hidden'>
+		<div id="moveable" style="position: absolute; top: 0; left: 0; width:100%; height:100%; margin: 0; padding: 0">
+			<div id="spaceobjects" style="position: absolute; top: 0; left: 0; width:100%; height:100%"></div>
+				<!--<div id="touchdebug" style="position: absolute; top: 0; left: 0; width:10px; height:10px; background-color: green"></div>-->
+			<canvas id="box2DDebug" style="position: absolute; top: 0; left: 0; width:100%; height:100%"></canvas>
+		</div>
+	</div>
+	<canvas id="hud" style="position: absolute; top: 0; left: 0; width:100%; height:100%" resize></canvas>
+	<div id="spaceevents" style="position: absolute; top: 0; left: 0; width:100%; height:100%; margin: 0; padding: 0"></div>
+	<button id="okbutton" style="position:absolute; height:70px; width:70px; top:50%; right:-100px; margin-top: -35px; border-radius: 30% 0% 0% 30%; color: rgba(230,179,179,1); background-color: rgba(230,179,179,0.1); border-color: rgba(230,179,179,1); font-family: Optima-ExtraBlack; font-size: x-large; text-align: left;"><strong>OK</strong></button>
+	<div id="dialogbackground" 
+		style="position: absolute; top: 0; left: 0; text-align: center; vertical-align:middle; line-height: 100%; width: 100%; height: 100%; background-color: #000000; opacity: 0.75; color: white; font-family: Optima-ExtraBlack; display:none">
+		<div id="dialog" style="
+			position: absolute;
+			top: 50%; left: 50%;
+			width: 400px; height: 100px; text-align: center;
+			margin-left: -200px; margin-top: -50px; color: white; font-family: Optima-ExtraBlack">
+		</div>
+	</div>
+</body>
+</html>
