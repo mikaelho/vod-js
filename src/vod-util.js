@@ -91,8 +91,10 @@ function setEvents() {
 			event.stopPropagation();
 			//currentFocus = findFocus(event.originalEvent.touches);
 			currentTouches = event.originalEvent.touches;
-			if (currentTouches.length == 1) {
-				lastTouch = new paper.Point(currentTouches[0].pageX, currentTouches[0].pageY);
+			let pointerEvent = currentTouches && currentTouches.length == 1 ? currentTouches[0] : event;
+			if (pointerEvent) {
+				lastTouch = new paper.Point(pointerEvent.pageX, pointerEvent.pageY);
+				console.log(lastTouch);
 				moved = false;
 				hits = ($("#hud").css("visibility") == "visible") ?
 					game.hudLayer.hitTest(screenToElement(lastTouch)) : null;
@@ -102,9 +104,14 @@ function setEvents() {
 		function(event) { 
 			event.preventDefault();
 			//currentFocus = screenToElement(findFocus(event.originalEvent.touches));
+			if (!lastTouch) {
+				return;
+			}
 			currentTouches = event.originalEvent.touches;
-			if (currentTouches.length == 1) {
-				currentTouch = new paper.Point(currentTouches[0].pageX, currentTouches[0].pageY);
+			let pointerEvent = currentTouches && currentTouches.length == 1 ? currentTouches[0] : event;
+			if (pointerEvent) {
+				currentTouch = new paper.Point(pointerEvent.pageX, pointerEvent	.pageY);
+
 				moved = true;
 				if (hits) {
 					game.moveThrusts(hits.item, screenToElement(currentTouch));
@@ -144,7 +151,7 @@ function setEvents() {
 					}
 				}
 			}
-			
+			lastTouch = null;
 			moved = false;
 			hits = null;
 		});
