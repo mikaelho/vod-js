@@ -10891,6 +10891,14 @@ delete Box2D.postDefs;</script>
 // Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
 // Real-time VoD simulation. Runs only in the host's browser (or Node for tests).
 // Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
+// Real-time VoD simulation. Runs only in the host's browser (or Node for tests).
+// Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
+// Real-time VoD simulation. Runs only in the host's browser (or Node for tests).
+// Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
+// Real-time VoD simulation. Runs only in the host's browser (or Node for tests).
+// Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
+// Real-time VoD simulation. Runs only in the host's browser (or Node for tests).
+// Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
 (function (root) {
 var S = 30, STEP = 3, W = 2100, H = 1300, CELL = 100, NB = 5, NR = 10, POWER = 100, HP = 100, FIX = 1 / 60;
 var SHIP = [[0,12],[6,6],[6,0],[12,6],[30,6],[36,12],[36,18],[30,24],[12,24],[6,30],[6,24],[0,18]];
@@ -10898,6 +10906,8 @@ var SHIP = [[0,12],[6,6],[6,0],[12,6],[30,6],[36,12],[36,18],[30,24],[12,24],[6,
 var PLANET = { rad: 90, k: 600000, mass: 8, soft: 8 }; // gravity = k / distance^2: about 10 px/s^2 at 250 px, i.e. a step's drift moves ~45 px
 var MOON_K = PLANET.k / 9; // a moon pulls 1/9 as hard as the planet, so the two cancel 3/4 of the way from the planet to the moon (0.75^2 : 0.25^2 = 9 : 1)
 var MOONS = [{ r: 250, rad: 26, k: MOON_K, w: .15, mass: 4 }, { r: 380, rad: 20, k: MOON_K, w: -.1, mass: 3 }, { r: 520, rad: 32, k: MOON_K, w: .07, mass: 5 }];
+var WALL_MASS = 2; // caves: a wall hit hurts like hitting something this heavy (a rock is about 3)
+function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; } // seeded random numbers, so a maze can be reproduced
 var COLORS = ['cyan', 'magenta', 'lightgreen', 'yellow', 'orange'];
 var rnd = function (a, b) { return a + Math.random() * (b - a); };
 var pick = function (arr) { return arr.splice(Math.floor(Math.random() * arr.length), 1)[0]; };
@@ -10910,13 +10920,84 @@ function hull(p) { // monotone chain
   lo.pop(); up.pop(); return lo.concat(up);
 }
 
-function Host(names, field) {
+// Cave walls: the maze's straight wall boxes are only a skeleton. Rasterise them, blur (rounds corners and ends), add smooth noise (the jitter), and trace the
+// 0.5 contour with marching squares. Returns closed loops as flat [x0, y0, x1, y1, ...] integer arrays. amp < 0.5 keeps walls solid and corridors open.
+function simplify(p, tol) { // Douglas-Peucker on an open polyline
+  if (p.length < 3) return p;
+  var keep = new Uint8Array(p.length), st = [[0, p.length - 1]]; keep[0] = keep[p.length - 1] = 1;
+  while (st.length) {
+    var s = st.pop(), a = p[s[0]], b = p[s[1]], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1, md = -1, mi = -1;
+    for (var q = s[0] + 1; q < s[1]; q++) {
+      var tt = Math.max(0, Math.min(1, ((p[q][0] - a[0]) * dx + (p[q][1] - a[1]) * dy) / L2)), ex = a[0] + tt * dx - p[q][0], ey = a[1] + tt * dy - p[q][1], d = ex * ex + ey * ey;
+      if (d > md) { md = d; mi = q; }
+    }
+    if (md > tol * tol) { keep[mi] = 1; st.push([s[0], mi], [mi, s[1]]); }
+  }
+  return p.filter(function (_, q) { return keep[q]; });
+}
+function caveContours(rects, W, H, t, amp, rng) {
+  var g = 6, pad = 6, nx = Math.ceil(W / g) + 1 + 2 * pad, ny = Math.ceil(H / g) + 1 + 2 * pad, i, j, solid = new Uint8Array(nx * ny);
+  for (j = 0; j < ny; j++) for (i = 0; i < nx; i++) { var px = (i - pad) * g, py = (j - pad) * g; if (px < 0 || py < 0 || px > W || py > H) solid[j * nx + i] = 1; } // outside the field is rock
+  rects.forEach(function (r) {
+    var i0 = Math.max(0, Math.ceil((r[0] - r[2] / 2) / g) + pad), i1 = Math.min(nx - 1, Math.floor((r[0] + r[2] / 2) / g) + pad), j0 = Math.max(0, Math.ceil((r[1] - r[3] / 2) / g) + pad), j1 = Math.min(ny - 1, Math.floor((r[1] + r[3] / 2) / g) + pad);
+    for (var b = j0; b <= j1; b++) for (var a = i0; a <= i1; a++) solid[b * nx + a] = 1;
+  });
+  var rw = Math.max(1, Math.floor(t / 2 / g)), S2 = nx + 1, I = new Int32Array(S2 * (ny + 1)), F = new Float32Array(nx * ny);
+  for (j = 0; j < ny; j++) { var row = 0; for (i = 0; i < nx; i++) { row += solid[j * nx + i]; I[(j + 1) * S2 + i + 1] = I[j * S2 + i + 1] + row; } }
+  var oct = [[150, .65], [60, .35]].map(function (o) { var cw = Math.ceil(W / o[0]) + 3, ch = Math.ceil(H / o[0]) + 3, a = []; for (var q = 0; q < cw * ch; q++) a.push(rng() * 2 - 1); return { s: o[0], w: cw, a: a, k: o[1] }; });
+  var noise = function (x, y) {
+    var tot = 0;
+    oct.forEach(function (o) {
+      var fx = x / o.s + 1, fy = y / o.s + 1, ix = Math.floor(fx), iy = Math.floor(fy), ux = fx - ix, uy = fy - iy; ux = ux * ux * (3 - 2 * ux); uy = uy * uy * (3 - 2 * uy);
+      tot += o.k * (o.a[iy * o.w + ix] * (1 - ux) * (1 - uy) + o.a[iy * o.w + ix + 1] * ux * (1 - uy) + o.a[(iy + 1) * o.w + ix] * (1 - ux) * uy + o.a[(iy + 1) * o.w + ix + 1] * ux * uy);
+    });
+    return tot;
+  };
+  for (j = 0; j < ny; j++) for (i = 0; i < nx; i++) {
+    var a0 = Math.max(0, i - rw), a1 = Math.min(nx - 1, i + rw), b0 = Math.max(0, j - rw), b1 = Math.min(ny - 1, j + rw);
+    var sum = I[(b1 + 1) * S2 + a1 + 1] - I[b0 * S2 + a1 + 1] - I[(b1 + 1) * S2 + a0] + I[b0 * S2 + a0];
+    F[j * nx + i] = sum / ((a1 - a0 + 1) * (b1 - b0 + 1)) + (amp ? amp * noise((i - pad) * g, (j - pad) * g) : 0);
+  }
+  var segs = [], at = {};
+  var ep = function (e) { // crossing point on a cell edge: 'h' joins node (i,j)-(i+1,j), 'v' joins (i,j)-(i,j+1)
+    var i2 = e[0] === 'h' ? e[1] + 1 : e[1], j2 = e[0] === 'h' ? e[2] : e[2] + 1, f1 = F[e[2] * nx + e[1]], f2 = F[j2 * nx + i2], tt = (.5 - f1) / (f2 - f1);
+    return [(e[1] - pad + tt * (i2 - e[1])) * g, (e[2] - pad + tt * (j2 - e[2])) * g];
+  };
+  var key = function (e) { return e[0] + e[1] + ',' + e[2]; };
+  var S = function (e1, e2) { var id = segs.length; segs.push([key(e1), key(e2), ep(e1), ep(e2)]); (at[key(e1)] = at[key(e1)] || []).push(id); (at[key(e2)] = at[key(e2)] || []).push(id); };
+  for (j = 0; j < ny - 1; j++) for (i = 0; i < nx - 1; i++) {
+    var va = F[j * nx + i] > .5, vb = F[j * nx + i + 1] > .5, vc = F[(j + 1) * nx + i + 1] > .5, vd = F[(j + 1) * nx + i] > .5, idx = (va ? 1 : 0) | (vb ? 2 : 0) | (vc ? 4 : 0) | (vd ? 8 : 0);
+    if (idx === 0 || idx === 15) continue;
+    var T = ['h', i, j], B = ['h', i, j + 1], L = ['v', i, j], R = ['v', i + 1, j];
+    switch (idx) {
+      case 1: case 14: S(L, T); break; case 2: case 13: S(T, R); break; case 3: case 12: S(L, R); break;
+      case 4: case 11: S(R, B); break; case 6: case 9: S(T, B); break; case 7: case 8: S(L, B); break;
+      case 5: case 10: var ctr = (F[j * nx + i] + F[j * nx + i + 1] + F[(j + 1) * nx + i + 1] + F[(j + 1) * nx + i]) / 4 > .5;
+        if ((idx === 5) === ctr) { S(T, R); S(L, B); } else { S(L, T); S(R, B); }
+    }
+  }
+  var used = new Uint8Array(segs.length), loops = [];
+  for (var s0 = 0; s0 < segs.length; s0++) {
+    if (used[s0]) continue;
+    var pts = [], cur = s0, k = segs[s0][0];
+    while (cur !== null && !used[cur]) {
+      used[cur] = 1; var sg = segs[cur], from = sg[0] === k ? 0 : 1; pts.push(from === 0 ? sg[2] : sg[3]); k = from === 0 ? sg[1] : sg[0];
+      var nx2 = (at[k] || []).filter(function (id) { return !used[id]; }); cur = nx2.length ? nx2[0] : null;
+    }
+    pts.push(pts[0]); var sp = simplify(pts, 1.2); sp.pop();
+    var per = 0; for (var q = 0; q < sp.length; q++) { var nq = sp[(q + 1) % sp.length]; per += Math.hypot(nq[0] - sp[q][0], nq[1] - sp[q][1]); }
+    if (sp.length >= 3 && per > 80) loops.push([].concat.apply([], sp.map(function (p) { return [Math.round(p[0]), Math.round(p[1])]; })));
+  }
+  return loops;
+}
+
+function Host(names, field, opts) {
   var b2 = Box2D, V = b2.Common.Math.b2Vec2, self = this;
   this.b2 = b2; this.V = V;
   this.world = new b2.Dynamics.b2World(new V(0, 0), true);
   this.time = 0; this.acc = 0; this.k = 0; this.nextTick = STEP * 2; // first lock after 4s: everyone gets time to plan
   this.leader = 0; this.over = false; this.winner = null; this.events = [];
-  this.ships = []; this.rocks = []; this.buoys = []; this.moons = []; this.grav = null; this.field = field === 'planet' ? 'planet' : 'classic';
+  this.ships = []; this.rocks = []; this.buoys = []; this.moons = []; this.grav = null; this.field = field === 'planet' || field === 'caves' ? field : 'classic'; this.W = W; this.H = H; this.walls = null; this.seed = null;
 
   var L = new b2.Dynamics.b2ContactListener();
   L.BeginContact = function (c) {
@@ -10925,6 +11006,7 @@ function Host(names, field) {
     if (b.kind === 'ship') self.contact(b, a);
   };
   this.world.SetContactListener(L);
+  if (this.field === 'caves') { this.buildCaves(names, opts || {}); return; }
 
   var cols = Math.floor(W / CELL), rows = Math.floor(H / CELL), cx = Math.round(cols / 2) - 1, cy = Math.round(rows / 2) - 1, cells = [];
   for (var i = 1; i < cols - 1; i++) for (var j = 1; j < rows - 1; j++) if (!(i === cx && j === cy)) cells.push([i, j]);
@@ -10960,8 +11042,19 @@ function Host(names, field) {
     r.body.SetLinearVelocity(new V(rnd(0, 25) / S, rnd(0, 25) / S)); r.body.SetAngularVelocity(rnd(0, 90) * Math.PI / 180);
     this.rocks.push(r);
   }
+  var bpos = [bu1]; // planet field: each buoy lies somewhere in the half-plane on the far side of the planet from the previous one (90 to 270 degrees round it)
+  if (planetField) {
+    for (var bi = 1; bi < NB; bi++) {
+      var pv = bpos[bi - 1], pa = Math.atan2(pv[1] - ctr[1], pv[0] - ctr[0]), cand = null;
+      for (var tries = 0; tries < 400 && !cand; tries++) {
+        var an = pa + Math.PI / 2 + Math.random() * Math.PI, rr = 250 + Math.random() * 350, c = [ctr[0] + rr * Math.cos(an), ctr[1] + rr * Math.sin(an)];
+        if (c[0] > 60 && c[0] < W - 60 && c[1] > 60 && c[1] < H - 60 && bpos.every(function (b) { return Math.hypot(b[0] - c[0], b[1] - c[1]) > 150; }) && starts.every(function (st) { return Math.hypot(st[0] - c[0], st[1] - c[1]) > 150; })) cand = c;
+      }
+      bpos.push(cand || at(pick(cells)));
+    }
+  }
   for (i = 1; i <= NB; i++) {
-    var q = i === 1 ? bu1 : at(pick(cells)), bu = { kind: 'buoy', n: i, x: q[0], y: q[1] };
+    var q = planetField ? bpos[i - 1] : i === 1 ? bu1 : at(pick(cells)), bu = { kind: 'buoy', n: i, x: q[0], y: q[1] };
     bu.body = this.body(bu, q[0], q[1], null, 30); this.buoys.push(bu);
   }
   var order = starts.slice();
@@ -10977,6 +11070,83 @@ function Host(names, field) {
     self.ships.push(sh);
   });
 }
+
+Host.prototype.addShip = function (i, name, s, d) { // d: first-step momentum as a vector in px
+  var V = this.V, sh = { kind: 'ship', i: i, name: name, color: COLORS[i % COLORS.length], hp: HP, visited: 0, dead: false,
+             q: [[0,0],[0,0],[0,0]], local: SHIP.map(function (p) { return [p[0] - 18, p[1] - 15]; }) };
+  sh.start = [s[0], s[1]]; sh.inv = 0; sh.respawnAt = 0; sh.dying = false;
+  sh.body = this.body(sh, s[0], s[1], hull(sh.local), 0);
+  sh.body.SetAngle(Math.atan2(d[1], d[0])); sh.body.SetAngularDamping(0.5);
+  sh.body.SetLinearVelocity(new V(d[0] / (STEP * S), d[1] / (STEP * S)));
+  this.ships.push(sh); return sh;
+};
+
+// "Caves" playfield: a start cavern on the left, then a maze with several entrances. Corridor width = opts.corridor (px). A spanning tree guarantees every cell
+// is reachable; opts.loops (0..1) then knocks out that share of the remaining walls, so there are alternative routes rather than one hard solution.
+Host.prototype.buildCaves = function (names, opts) {
+  var self = this, V = this.V, b2 = this.b2, i, j, k;
+  var seed = opts.seed != null && opts.seed !== '' && isFinite(+opts.seed) ? +opts.seed : Math.floor(Math.random() * 1e9), rng = mulberry(seed);
+  var rint = function (n) { return Math.floor(rng() * n); }, shuffle = function (a) { for (var q = a.length - 1; q > 0; q--) { var r = rint(q + 1), t = a[q]; a[q] = a[r]; a[r] = t; } return a; };
+  var c = Math.max(120, Math.min(480, +opts.corridor || 240)), loops = Math.max(0, Math.min(1, opts.loops != null && isFinite(+opts.loops) ? +opts.loops : .2));
+  var t = Math.round(Math.max(40, Math.min(70, c * .25))), P = c + t, SW = 700; // t: wall thickness, P: grid pitch, SW: width of the start cavern
+  var N = Math.max(4, Math.floor(2700 / P)), M = Math.max(3, Math.floor(1500 / P)), x0 = SW, y0 = t / 2;
+  this.W = SW + N * P + t / 2; this.H = M * P + t; this.seed = seed;
+  var v = [], h = []; // v[i][j]: wall on vertical line i beside row j; h[i][j]: wall on horizontal line j under column i
+  for (i = 0; i <= N; i++) { v[i] = []; for (j = 0; j < M; j++) v[i][j] = true; }
+  for (i = 0; i < N; i++) { h[i] = []; for (j = 0; j <= M; j++) h[i][j] = true; }
+  var par = []; for (k = 0; k < N * M; k++) par[k] = k;
+  var find = function (a) { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; }, edges = [], left = [];
+  for (i = 1; i < N; i++) for (j = 0; j < M; j++) edges.push([0, i, j, i - 1 + j * N, i + j * N]);
+  for (i = 0; i < N; i++) for (j = 1; j < M; j++) edges.push([1, i, j, i + (j - 1) * N, i + j * N]);
+  shuffle(edges).forEach(function (e) {
+    var a = find(e[3]), b = find(e[4]);
+    if (a !== b) { par[a] = b; (e[0] ? h : v)[e[1]][e[2]] = false; } else left.push(e);
+  });
+  left.forEach(function (e) { if (rng() < loops) (e[0] ? h : v)[e[1]][e[2]] = false; }); // the extra openings: route choices
+  var rows = []; for (j = 0; j < M; j++) rows.push(j);
+  var entrances = shuffle(rows).slice(0, Math.min(M, Math.max(3, Math.round(M * .6)))); entrances.forEach(function (r) { v[0][r] = false; });
+  var open = function (u) { var ui = u % N, uj = Math.floor(u / N), o = []; // cells you can walk to from cell u
+    if (ui > 0 && !v[ui][uj]) o.push(u - 1); if (ui < N - 1 && !v[ui + 1][uj]) o.push(u + 1); if (uj > 0 && !h[ui][uj]) o.push(u - N); if (uj < M - 1 && !h[ui][uj + 1]) o.push(u + N); return o; };
+  var bfs = function (src) { var d = [], q = src.slice(); for (var z = 0; z < N * M; z++) d[z] = -1; src.forEach(function (s0) { d[s0] = 0; });
+    while (q.length) { var u = q.shift(); open(u).forEach(function (w) { if (d[w] < 0) { d[w] = d[u] + 1; q.push(w); } }); } return d; };
+  var dEnt = bfs(entrances.map(function (r) { return r * N; })), chosen = []; // buoy 1 a few cells in from the entrances, the next ones a good walk from the previous buoy and not near earlier ones
+  for (var bn = 0; bn < NB; bn++) {
+    var dPrev = bn ? bfs([chosen[bn - 1]]) : dEnt, lo = bn ? 4 : 3, hi = bn ? 9 : 6, cand = [];
+    for (var att = 0; att < 7 && !cand.length; att++) for (var u = 0; u < N * M; u++) {
+      if (chosen.indexOf(u) >= 0 || dPrev[u] < lo - att || dPrev[u] > hi + att * 2) continue;
+      if (chosen.every(function (o) { return Math.hypot(o % N - u % N, Math.floor(o / N) - Math.floor(u / N)) >= 3 - Math.floor(att / 3); })) cand.push(u);
+    }
+    if (!cand.length) for (var u2 = 0; u2 < N * M; u2++) if (chosen.indexOf(u2) < 0) cand.push(u2);
+    chosen.push(cand[rint(cand.length)]);
+  }
+  chosen.forEach(function (u, n) {
+    var bx = x0 + (u % N + .5) * P, by = y0 + (Math.floor(u / N) + .5) * P, bu = { kind: 'buoy', n: n + 1, x: bx, y: by };
+    bu.body = self.body(bu, bx, by, null, 30); self.buoys.push(bu);
+  });
+  var rects = []; // [centre x, centre y, width, height] in px
+  for (i = 0; i <= N; i++) for (j = 0; j < M; j++) if (v[i][j]) rects.push([x0 + i * P, y0 + j * P + P / 2, t, P + t]);
+  for (i = 0; i < N; i++) for (j = 0; j <= M; j++) if (h[i][j]) rects.push([x0 + i * P + P / 2, y0 + j * P, P + t, t]);
+  rects.push([x0 / 2, y0, x0, t], [x0 / 2, y0 + M * P, x0, t], [t / 2, this.H / 2, t, this.H]); // roof, floor and back wall of the start cavern
+  var rough = Math.max(0, Math.min(100, opts.rough != null && isFinite(+opts.rough) ? +opts.rough : 80)) / 100;
+  var cave = caveContours(rects, this.W, this.H, t, .38 * rough, rng); // organic outlines; rough = 0 gives smooth rounded walls, 100 the most jitter
+  var wall = { kind: 'wall', mass: WALL_MASS }, bd = new b2.Dynamics.b2BodyDef(); bd.type = b2.Dynamics.b2Body.b2_staticBody; bd.userData = wall;
+  wall.body = this.world.CreateBody(bd);
+  cave.forEach(function (lp) { // every outline segment is an edge shape
+    for (var q = 0; q < lp.length; q += 2) {
+      var nq = (q + 2) % lp.length, x1 = lp[q], y1 = lp[q + 1], x2 = lp[nq], y2 = lp[nq + 1]; if (Math.hypot(x2 - x1, y2 - y1) < .5) continue;
+      var fd = new b2.Dynamics.b2FixtureDef(); fd.shape = new b2.Collision.Shapes.b2PolygonShape(); fd.shape.SetAsEdge(new V(x1 / S, y1 / S), new V(x2 / S, y2 / S));
+      fd.friction = .2; fd.restitution = .5; wall.body.CreateFixture(fd);
+    }
+  });
+  this.walls = cave;
+  // ships line up in front of the entrances and head straight through them, so nobody starts aimed at a wall
+  var ent = shuffle(entrances.slice()), grp = {};
+  names.forEach(function (_, q) { var r = ent[q % ent.length]; (grp[r] = grp[r] || []).push(q); });
+  names.forEach(function (name, q) {
+    var r = ent[q % ent.length], g = grp[r], sh = self.addShip(q, name, [260, y0 + (r + .5) * P + (g.indexOf(q) - (g.length - 1) / 2) * 70], [100, 0]);
+    sh.body.GetFixtureList().SetRestitution(.5); // bounce less off walls
+  });
+};
 
 Host.prototype.body = function (obj, x, y, pts, radius, solid) {
   var b2 = this.b2, V = this.V, bd = new b2.Dynamics.b2BodyDef();
@@ -11081,7 +11251,7 @@ Host.prototype.step = function (dt) {
 };
 
 Host.prototype.init = function (you) {
-  return { t: 'init', you: you, field: this.field, grav: this.grav, W: W, H: H, step: STEP, nb: NB, ship: SHIP,
+  return { t: 'init', you: you, field: this.field, grav: this.grav, W: this.W, H: this.H, walls: this.walls, seed: this.seed, step: STEP, nb: NB, ship: SHIP,
     players: this.ships.map(function (s) { return { name: s.name, color: s.color }; }),
     buoys: this.buoys.map(function (b) { return [b.n, b.x, b.y]; }),
     rocks: this.rocks.map(function (r) { return r.pts; }) };
@@ -11118,15 +11288,16 @@ if (typeof module !== 'undefined') module.exports = Host;
 <canvas id="c"></canvas>
 <div id="hud"></div>
 <div id="banner"></div>
-<div id="vb" style="position:absolute;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;gap:4px"><button id="bfit">Fit</button><button id="brt">Route</button><button id="bbuoy">Buoy</button><button id="bin">+</button><button id="bout">−</button></div>
+<div id="vb" style="position:absolute;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;gap:4px"><button id="bnew" style="display:none">New</button><button id="bfit">Fit</button><button id="brt">Route</button><button id="bbuoy">Buoy</button><button id="bin">+</button><button id="bout">−</button></div>
 <div id="err" style="position:absolute;bottom:0;left:0;right:0;background:#400;color:#fcc;font:12px monospace;padding:4px;display:none;white-space:pre-wrap"></div>
 <div id="lobby"><div id="box">
  <h2>Vector of Death - real time</h2>
  <input id="name" placeholder="Your name" maxlength="14"><br>
  <label style="font-size:14px"><input type="checkbox" id="canhost" style="width:auto"> I can host (laptop or desktop, tab stays open)</label><br>
- <select id="field"><option value="classic">Playfield: classic rocks</option><option value="planet">Playfield: planet and moons</option></select><br>
+ <select id="field"><option value="classic">Playfield: classic rocks</option><option value="planet">Playfield: planet and moons</option><option value="caves">Playfield: labyrinth caves</option></select><br>
+ <div id="caveopts" style="display:none;font-size:14px">Corridor width <input id="corridor" type="number" value="240" min="120" max="480" step="20" style="width:70px"> Openness % <input id="loops" type="number" value="20" min="0" max="100" step="5" style="width:60px"> Roughness % <input id="rough" type="number" value="80" min="0" max="100" step="10" style="width:60px"></div>
  <button id="create">Host a game</button> <button id="solo">Practice solo</button><br>
- <input id="code" placeholder="Game code"><button id="join">Join</button><br>
+ <input id="code" value="a" placeholder="Game code" maxlength="20" autocapitalize="none" autocomplete="off"><button id="join">Join</button><br>
  <button id="start" style="display:none">Start game</button>
  <div id="msg"></div>
 </div></div>
@@ -11140,60 +11311,77 @@ const msg = t => $('msg').textContent = t, myName = () => $('name').value.trim()
 
 // ---------- lobby and host election ----------
 const isMobile = () => matchMedia('(pointer:coarse)').matches || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent), canHost = () => $('canhost').checked;
+const urlq = new URLSearchParams(location.search);
+// tuning links: ?field=caves&corridor=240&loops=30&seed=7
+if (urlq.get('field')) $('field').value = urlq.get('field');
+if (urlq.get('corridor')) $('corridor').value = urlq.get('corridor');
+if (urlq.get('loops')) $('loops').value = urlq.get('loops');
+if (urlq.get('rough')) $('rough').value = urlq.get('rough');
+const caveOpts = fresh => ({ corridor: +$('corridor').value || 240, loops: Math.max(0, Math.min(100, +$('loops').value || 0)) / 100, rough: $('rough').value === '' ? 80 : +$('rough').value, seed: fresh ? null : urlq.get('seed') });
+const showCaveOpts = () => { $('caveopts').style.display = $('field').value === 'caves' ? '' : 'none'; };
+showCaveOpts();
 $('canhost').checked = !isMobile(); // phones and tablets opt out of hosting by default
 function onIncoming(c, m) {
   if (m.t === 'hello') { if (roster.length >= 5 || electedDone) { c.send({ t: 'full' }); return; } roster.push({ pid: m.pid, name: m.name, mobile: !!m.mobile, canHost: m.canHost !== false, conn: c }); coordConns.push(c); showRoster(); }
   else if (m.t === 'join') { links[m.pid] = c; maybeLaunch(); }
   else if (m.t === 'thrust' && sim) { const i = roster.findIndex(r => r.pid === c.metadata_pid); sim.setThrust(i, m.k, m.x, m.y); }
 }
+const gameCode = () => ($('code').value.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[-_]+|[-_]+$/g, '') || 'a'); // the code is not secret: anyone who types it can join
 function newPeer(id, ready) {
+  if (peer) { try { peer.destroy(); } catch (_) {} peer = null; }
   if (!window.Peer) { msg('Loading networking...'); const sc_ = document.createElement('script'); sc_.src = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
     sc_.onload = () => newPeer(id, ready); sc_.onerror = () => msg('Multiplayer is not available here. Host this page on your own site for network play. Solo practice still works.'); document.head.appendChild(sc_); return; }
   peer = id ? new Peer(id) : new Peer();
   peer.on('open', ready);
-  peer.on('error', e => e.type === 'unavailable-id' ? newPeer('vodjs-' + Math.random().toString(36).slice(2, 6), ready) : msg(e.type === 'peer-unavailable' ? 'No game found with that code.' : 'Network error (' + e.type + '). Inside the Claude app multiplayer is not available; host this page on your own site.'));
+  peer.on('error', e => msg(e.type === 'unavailable-id' ? 'The code "' + gameCode() + '" is already in use. Pick another code, or wait a minute if that was your own game.'
+    : e.type === 'peer-unavailable' ? 'No game found with the code "' + gameCode() + '". Check the code, and that the host has pressed Host a game.'
+    : 'Network error (' + e.type + '). Inside the Claude app multiplayer is not available; host this page on your own site.'));
   peer.on('connection', c => c.on('data', m => { if (m.pid) c.metadata_pid = m.pid; onIncoming(c, m); }));
 }
-const fieldName = f => f === 'planet' ? 'planet and moons' : 'classic rocks';
-function showRoster() { msg('Players: ' + roster.map(r => r.name).join(', ') + ' | Playfield: ' + fieldName($('field').value)); $('start').style.display = roster.length > 0 ? '' : 'none';
+const fieldName = f => f === 'planet' ? 'planet and moons' : f === 'caves' ? 'labyrinth caves' : 'classic rocks';
+function showRoster() { msg('Game code "' + gameCode() + '" | Players: ' + roster.map(r => r.name).join(', ') + ' | Playfield: ' + fieldName($('field').value)); $('start').style.display = roster.length > 0 ? '' : 'none';
   coordConns.forEach(c => c.send({ t: 'roster', names: roster.map(r => r.name), field: $('field').value })); }
-$('field').onchange = () => { if (peer && roster.length) showRoster(); };
+$('field').onchange = () => { showCaveOpts(); if (peer && roster.length) showRoster(); };
 $('create').onclick = () => { const name = myName();
-  newPeer('vodjs-' + Math.random().toString(36).slice(2, 6), id => { roster = [{ pid: id, name, mobile: isMobile(), canHost: canHost() }]; $('code').value = id; showRoster(); msg('Share this code: ' + id + ' (players: ' + name + ')'); }); };
-$('join').onclick = () => { const name = myName(), code = $('code').value.trim(); $('field').disabled = true; // the game creator chooses the playfield
-  newPeer(null, id => { lobbyConn = peer.connect(code, { reliable: true });
+  newPeer('vodjs-' + gameCode(), id => { roster = [{ pid: id, name, mobile: isMobile(), canHost: canHost() }]; showRoster(); }); };
+$('join').onclick = () => { const name = myName(); $('field').disabled = $('corridor').disabled = $('loops').disabled = $('rough').disabled = true; // the game creator chooses the playfield
+  newPeer(null, id => { lobbyConn = peer.connect('vodjs-' + gameCode(), { reliable: true });
     lobbyConn.on('open', () => { lobbyConn.send({ t: 'hello', pid: id, name, mobile: isMobile(), canHost: canHost() }); msg('Joined. Waiting for the host to start...'); });
     lobbyConn.on('data', m => {
       if (m.t === 'full') msg('That game is full or has already started.');
       if (m.t === 'roster') msg('Players: ' + m.names.join(', ') + ' | Playfield: ' + fieldName(m.field));
-      if (m.t === 'host') elected(m.hostId, m.roster, m.field);
+      if (m.t === 'host') elected(m.hostId, m.roster, m.field, m.opts);
     }); }); };
 // Host choice: only players who ticked "I can host"; laptops and desktops before phones and tablets; then the game creator, then join order.
 $('start').onclick = () => { $('start').style.display = 'none'; electedDone = true;
   const pool = roster.filter(r => r.canHost), cand = pool.length ? pool : roster, best = cand.find(r => !r.mobile) || cand[0], list = roster.map(r => ({ pid: r.pid, name: r.name }));
-  coordConns.forEach(c => c.send({ t: 'host', hostId: best.pid, roster: list, field: $('field').value })); elected(best.pid, list, $('field').value); };
-function elected(hostId, list, field) {
+  coordConns.forEach(c => c.send({ t: 'host', hostId: best.pid, roster: list, field: $('field').value, opts: caveOpts() })); elected(best.pid, list, $('field').value, caveOpts()); };
+function elected(hostId, list, field, opts) {
   roster = list; me = list.findIndex(r => r.pid === peer.id); iAmHost = hostId === peer.id;
-  if (iAmHost) { sim = new VodHost(list.map(r => r.name), field); msg('You are the host. Keep this tab visible.'); maybeLaunch(); setTimeout(() => maybeLaunch(true), 8000); }
+  if (iAmHost) { sim = new VodHost(list.map(r => r.name), field, opts); msg('You are the host. Keep this tab visible.'); maybeLaunch(); setTimeout(() => maybeLaunch(true), 8000); }
   else { hostConn = peer.connect(hostId, { reliable: true });
     hostConn.on('open', () => hostConn.send({ t: 'join', pid: peer.id })); hostConn.on('data', onHostMsg); }
 }
-$('solo').onclick = () => { roster = [{ pid: 'me', name: myName() }]; me = 0; iAmHost = true; sim = new VodHost([roster[0].name], $('field').value); maybeLaunch(true); };
+let soloMode = false, soloName = '', loopId = null;
+function startSolo(fresh) { roster = [{ pid: 'me', name: soloName }]; me = 0; iAmHost = true; sim = new VodHost([soloName], $('field').value, caveOpts(fresh)); maybeLaunch(true); }
+$('solo').onclick = () => { soloMode = true; soloName = myName(); startSolo(false); };
+// "New" (solo only): throw the game away and start again with a new random layout and the current settings, for quick tuning
+$('bnew').onclick = () => { clearInterval(loopId); G = null; snaps = []; fx = []; local = null; over = null; $('banner').style.display = 'none'; view.z = 1; view.cx = null; view.cy = null; clock.off = null; ptrs.clear(); mode = null; startSolo(true); };
 function maybeLaunch(force) {
   if (!sim || sim.started) return;
   if (!force && !roster.every((r, i) => i === me || links[r.pid])) return;
-  sim.started = true; $('lobby').style.display = 'none';
+  sim.started = true; $('lobby').style.display = 'none'; $('bnew').style.display = soloMode ? '' : 'none';
   roster.forEach((r, i) => { if (links[r.pid]) links[r.pid].send(sim.init(i)); });
   onHostMsg(sim.init(me));
   let last = performance.now(), lastSnap = 0;
-  setInterval(() => { const n = performance.now(); sim.step((n - last) / 1000); last = n;
+  loopId = setInterval(() => { const n = performance.now(); sim.step((n - last) / 1000); last = n;
     if (n - lastSnap >= 50) { lastSnap = n; const s = sim.snapshot(); roster.forEach((r, i) => links[r.pid] && links[r.pid].send(s)); onHostMsg(s); } }, 16);
 }
 
 // ---------- client: state, input ----------
 const clock = { off: null };
 function onHostMsg(m) {
-  if (m.t === 'init') { G = m; return; }
+  if (m.t === 'init') { G = m; me = m.you; $('lobby').style.display = 'none'; return; }
   if (m.t !== 'snap') return;
   const now = performance.now(), smp = m.ht * 1000 - now; m.at = now; m.tickH = m.ht + m.tin / 1000; // next lock, in host game time
   clock.off = clock.off === null ? smp : clock.off + (smp - clock.off) * .05; // low-pass: arrival-time jitter must not move anything on screen
@@ -11213,6 +11401,17 @@ function fly(st, T, dur, pts) { // integrate dur seconds from [x, y, vx, vy] at 
   for (let i = 0; i < n; i++) { const a = accel(x, y, T + i * h); vx += a[0] * h; vy += a[1] * h; x += vx * h; y += vy * h; if (pts) pts.push([x, y]); }
   return [x, y, vx, vy];
 }
+let wallIdx = null;
+function nearWall(x, y, R) { // is (x, y) within R px (R <= 24) of a cave wall? uses a grid of outline segments, built on first use
+  if (!wallIdx || wallIdx.src !== G.walls) {
+    const C = 48, grid = {}, segs = [];
+    G.walls.forEach(lp => { for (let q = 0; q < lp.length; q += 2) { const n = (q + 2) % lp.length, sg = [lp[q], lp[q + 1], lp[n], lp[n + 1]], id = segs.push(sg) - 1;
+      for (let cx = Math.floor((Math.min(sg[0], sg[2]) - 24) / C); cx <= Math.floor((Math.max(sg[0], sg[2]) + 24) / C); cx++) for (let cy = Math.floor((Math.min(sg[1], sg[3]) - 24) / C); cy <= Math.floor((Math.max(sg[1], sg[3]) + 24) / C); cy++) (grid[cx + ',' + cy] = grid[cx + ',' + cy] || []).push(id); } });
+    wallIdx = { src: G.walls, C, grid, segs };
+  }
+  const l = wallIdx.grid[Math.floor(x / wallIdx.C) + ',' + Math.floor(y / wallIdx.C)]; if (!l) return false;
+  return l.some(id => { const sg = wallIdx.segs[id], dx = sg[2] - sg[0], dy = sg[3] - sg[1], t = Math.max(0, Math.min(1, ((x - sg[0]) * dx + (y - sg[1]) * dy) / (dx * dx + dy * dy || 1))), ex = sg[0] + t * dx - x, ey = sg[1] + t * dy - y; return ex * ex + ey * ey < R * R; });
+}
 function plan() { // my ship's expected route: where each thrust fires (F), where it would be without thrust (C), where it ends up (H)
   const I = interp(performance.now() - 100), s = I.s, mine = I.ships[me], tr = Math.max(0, s.tickH - I.th);
   const q = s.ships[me].q.map(a => a.slice()); if (local && local.k === s.k) q[2] = [local.x, local.y];
@@ -11220,7 +11419,9 @@ function plan() { // my ship's expected route: where each thrust fires (F), wher
   cur = fly(cur, T, tr, path); T += tr;
   for (let i = 0; i < 3; i++) { F.push([cur[0], cur[1]]); C.push(fly(cur, T, G.step).slice(0, 2)); if (i === 2) at2 = { st: cur, T };
     cur = fly([cur[0], cur[1], cur[2] + q[i][0] / G.step, cur[3] + q[i][1] / G.step], T, G.step, path); T += G.step; H.push([cur[0], cur[1]]); }
-  return { F, C, H, q, path, at2, pw: s.pw[me], k: s.k, tickH: s.tickH };
+  let crash = null;
+  if (G.walls) for (let i = 0; i < path.length && !crash; i += 3) { const p = path[i]; if (nearWall(p[0], p[1], 20)) { crash = p; path.length = i + 1; } }
+  return { F, C, H, q, path, at2, crash, pw: s.pw[me], k: s.k, tickH: s.tickH };
 }
 function setThird(e) {
   if (!G || !snaps.length || over || latest().ships[me].dead) return;
@@ -11296,6 +11497,11 @@ function frame() {
     I.moons.forEach((m, i) => { circle(m[0], m[1], g.moons[i].rad); ctx.fillStyle = '#556'; ctx.shadowColor = '#aab'; ctx.shadowBlur = 15; ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = '#ccd'; ctx.lineWidth = 2; ctx.stroke();
       const ex = g.c[0] + .75 * (m[0] - g.c[0]), ey = g.c[1] + .75 * (m[1] - g.c[1]); ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.fillStyle = 'rgba(255,255,255,.45)'; ctx.lineWidth = Math.max(1.5, 1.5 / sc); // pull of planet and moon cancels here
       circle(ex, ey, 9); ctx.stroke(); circle(ex, ey, 2.5); ctx.fill(); ctx.restore(); }); ctx.restore(); }
+  if (G.walls) { // cave walls: everything outside the free-space outlines is rock (even-odd fill), with a glowing edge
+    const trace = () => { ctx.beginPath(); G.walls.forEach(lp => { for (let q = 0; q < lp.length; q += 2) q ? ctx.lineTo(lp[q], lp[q + 1]) : ctx.moveTo(lp[q], lp[q + 1]); ctx.closePath(); }); };
+    ctx.save(); ctx.lineJoin = 'round'; trace(); ctx.strokeStyle = '#cfe'; ctx.lineWidth = 8; ctx.shadowColor = '#8ab'; ctx.shadowBlur = 25; ctx.stroke(); ctx.shadowBlur = 0;
+    ctx.rect(-400, -400, G.W + 800, G.H + 800); ctx.fillStyle = '#05060c'; ctx.fill('evenodd');
+    trace(); ctx.strokeStyle = '#e8f4ff'; ctx.lineWidth = 2; ctx.stroke(); ctx.restore(); }
   // rocks
   G.rocks.forEach((pts, i) => { const r = I.rocks[i]; ctx.save(); ctx.translate(r[0], r[1]); ctx.rotate(r[2]); smooth(pts);
     ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.shadowColor = 'darkgrey'; ctx.shadowBlur = 20; ctx.fill(); ctx.stroke(); ctx.restore(); });
@@ -11333,6 +11539,7 @@ function frame() {
   if (!s.ships[me].dead && !over) {
     const P = plan(), col = G.players[me].color, sh = I.ships[me];
     ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.globalAlpha = 1; poly(P.path); ctx.stroke();
+    if (P.crash) { const k = Math.max(12, 12 / sc); ctx.save(); ctx.strokeStyle = '#f55'; ctx.lineWidth = Math.max(3, 3 / sc); ctx.beginPath(); ctx.moveTo(P.crash[0] - k, P.crash[1] - k); ctx.lineTo(P.crash[0] + k, P.crash[1] + k); ctx.moveTo(P.crash[0] + k, P.crash[1] - k); ctx.lineTo(P.crash[0] - k, P.crash[1] + k); ctx.stroke(); ctx.restore(); }
     P.C.forEach((f, i) => { const tip = P.H[i], open = i === 2;
       ctx.globalAlpha = open ? .5 : .25; ctx.fillStyle = col; circle(f[0], f[1], P.pw); ctx.fill();
       ctx.globalAlpha = 1; ctx.lineWidth = open ? 3 : 1.5;
@@ -11343,7 +11550,7 @@ function frame() {
 }
 requestAnimationFrame(frame);
 setInterval(() => { if (!G || !snaps.length) return; const s = latest();
-  $('hud').innerHTML = G.players.map((p, i) => `<span style="color:${p.color}">${p.name}${i === me ? ' (you)' : ''}</span>: ${s.ships[i].n}/${G.nb}, hull ${s.ships[i].hp}%${s.ships[i].dead ? ' - DESTROYED, back in ' + Math.ceil(s.ships[i].rs) + 's' : ''}` + (s.pw[i] > 100 ? `, underdog +${Math.round(s.pw[i] - 100)}%` : '')).join('<br>') + (iAmHost ? '<br><small>you are the host: keep this tab visible</small>' : '');
+  $('hud').innerHTML = G.players.map((p, i) => `<span style="color:${p.color}">${p.name}${i === me ? ' (you)' : ''}</span>: ${s.ships[i].n}/${G.nb}, hull ${s.ships[i].hp}%${s.ships[i].dead ? ' - DESTROYED, back in ' + Math.ceil(s.ships[i].rs) + 's' : ''}` + (s.pw[i] > 100 ? `, underdog +${Math.round(s.pw[i] - 100)}%` : '')).join('<br>') + (iAmHost ? '<br><small>you are the host: keep this tab visible</small>' : '') + (G.seed != null ? '<br><small>maze seed ' + G.seed + '</small>' : '');
   const b = $('banner'); if (over) { b.style.display = 'block'; b.textContent = 'Winner: ' + over; } }, 200);
 </script>
 </body>
