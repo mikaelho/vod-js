@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
-<title>Network test v1</title>
+<title>Network test v2</title>
 <script async src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js" onerror="window.peerFail=true"></script>
 <style>
  body{font:15px/1.45 system-ui,sans-serif;background:#111;color:#ddd;margin:0;padding:12px;padding-top:max(12px,env(safe-area-inset-top))}
@@ -21,7 +21,7 @@
 </head>
 <body>
 <main>
-<h1>Network test <small id="ver">v1</small></h1>
+<h1>Network test <small id="ver">v2</small></h1>
 <small>Checks each layer of online play separately. Do steps 1&ndash;2 in any tab; do step 3 in two tabs or on two devices.</small>
 
 <h2>0. This page</h2>
@@ -33,11 +33,19 @@
 <h2>2. Connection service (introduces the two browsers)</h2>
 <div class="row wait" id="s2">waiting for step 1&hellip;</div>
 
+<h2>2b. Network probe (do the STUN and relay servers answer?)</h2>
+<div class="row wait" id="s2b">probing...</div>
+
+<h2>2c. Loopback (can this browser connect to itself?)</h2>
+<div class="row wait" id="s2c">testing...</div>
+
 <h2>3. Direct connection between two browsers</h2>
 <div>Code: <input id="code" value="test" autocapitalize="none" autocomplete="off">
-<button id="host">Host</button><button id="join">Join</button></div>
+<button id="host">Host</button><button id="join">Join</button>
+<label><input type="checkbox" id="relay" style="width:auto"> Relay only (forces the relay server)</label></div>
 <div class="row na" id="s3">Tab 1: press Host. Tab 2 (or another device): same code, press Join.</div>
 <div class="row na" id="s3b"></div>
+<div class="row na" id="s3c"></div>
 
 <h2>4. Same-browser tabs (no internet needed)</h2>
 <div class="row na" id="s4">checking&hellip;</div>
@@ -51,6 +59,18 @@ const $ = id => document.getElementById(id), lines = {}, T0 = performance.now(),
 function set(id, cls, text) { const e = $(id); e.className = 'row ' + cls; e.textContent = text; lines[id] = text; $('rep').value = 'Network test ' + $('ver').textContent + '\n' + Object.keys(lines).sort().map(k => 'step ' + k.slice(1) + ': ' + lines[k]).join('\n') + (blocked.length ? '\nBLOCKED by page policy: ' + blocked.join(', ') : ''); }
 const blocked = [];
 document.addEventListener('securitypolicyviolation', e => { blocked.push(e.blockedURI + ' (' + e.violatedDirective + ')'); set('s0', 'bad', $('s0').textContent); });
+
+const ICE = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }]; // the PeerJS defaults
+const cfg = () => ({ iceServers: ICE, iceTransportPolicy: $('relay').checked ? 'relay' : 'all' });
+const kind = c => !c ? '?' : c.candidateType === 'host' ? 'same network' : c.candidateType === 'relay' ? 'RELAY' : 'through NAT';
+async function pairOf(pc) {
+  try {
+    const st = await pc.getStats(), by = {}; let sel = null; st.forEach(r => by[r.id] = r);
+    st.forEach(r => { if (r.type === 'transport' && r.selectedCandidatePairId) sel = by[r.selectedCandidatePairId]; });
+    if (!sel) st.forEach(r => { if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') sel = r; });
+    return sel ? 'local ' + kind(by[sel.localCandidateId]) + ', remote ' + kind(by[sel.remoteCandidateId]) : 'unknown';
+  } catch (e) { return 'unknown'; }
+}
 
 // 0. environment
 set('s0', 'na', location.protocol + '//' + (location.host || '(no host)') + ' | ' + (navigator.onLine ? 'online' : 'OFFLINE') + ' | RTCPeerConnection: ' + (window.RTCPeerConnection ? 'yes' : 'NO') + ' | BroadcastChannel: ' + (window.BroadcastChannel ? 'yes' : 'no') + ' | ' + navigator.userAgent.replace(/^Mozilla\/5.0 /, '').slice(0, 90));
@@ -73,28 +93,53 @@ function testService() {
   p.on('error', e => { clearTimeout(to); finish('bad', 'error "' + e.type + '": ' + (e.message || '')); });
 }
 
-// 3. direct connection: host answers pings, joiner measures round trips and reports how the connection was made
-async function pathType(conn) {
-  try {
-    const pc = conn.peerConnection, st = await pc.getStats(), by = {}; let sel = null;
-    st.forEach(r => by[r.id] = r);
-    st.forEach(r => { if (r.type === 'transport' && r.selectedCandidatePairId) sel = by[r.selectedCandidatePairId]; });
-    if (!sel) st.forEach(r => { if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') sel = r; });
-    const l = sel && by[sel.localCandidateId], r2 = sel && by[sel.remoteCandidateId];
-    const kind = c => !c ? '?' : c.candidateType === 'host' ? 'same network' : c.candidateType === 'relay' ? 'RELAY' : 'through NAT';
-    return sel ? 'local ' + kind(l) + ', remote ' + kind(r2) : 'unknown';
-  } catch (e) { return 'unknown'; }
+// 2b. which kinds of candidate addresses can this browser get? host = local, srflx = via STUN (through the router), relay = via the relay server
+function probe() {
+  if (!window.RTCPeerConnection) return set('s2b', 'bad', 'no RTCPeerConnection');
+  set('s2b', 'wait', 'probing...');
+  const pc = new RTCPeerConnection(cfg()), c = { host: 0, srflx: 0, relay: 0, mdns: 0 }, errs = [], t = performance.now(); let done = false;
+  const finish = () => { if (done) return; done = true; pc.close();
+    set('s2b', c.srflx || c.relay ? 'ok' : 'bad', 'in ' + ms(t) + ': host ' + c.host + (c.mdns ? ' (' + c.mdns + ' hidden behind .local names)' : '') + ', STUN/through-router ' + c.srflx + ', relay ' + c.relay + (c.srflx ? '' : ' [STUN gave nothing]') + (c.relay ? '' : ' [relay gave nothing]') + (errs.length ? ' | errors: ' + errs.slice(0, 3).join('; ') : '')); };
+  pc.createDataChannel('x'); pc.onicecandidateerror = e => errs.push((e.url || '?').replace(/^(stun|turn):/, '$1:') + ' ' + (e.errorCode || '') + ' ' + (e.errorText || ''));
+  pc.onicecandidate = e => { if (!e.candidate) return finish(); const m = / typ (host|srflx|relay)/.exec(e.candidate.candidate); if (m) { c[m[1]]++; if (/ [a-f0-9-]+\.local /.test(e.candidate.candidate)) c.mdns++; } };
+  setTimeout(finish, 8000); pc.createOffer().then(o => pc.setLocalDescription(o));
 }
+// 2c. two connections inside this page, no signaling service involved
+async function loopback() {
+  if (!window.RTCPeerConnection) return set('s2c', 'bad', 'no RTCPeerConnection');
+  set('s2c', 'wait', 'testing...');
+  const a = new RTCPeerConnection(cfg()), b = new RTCPeerConnection(cfg()), t = performance.now(); let done = false;
+  const fin = (cls, txt) => { if (done) return; done = true; set('s2c', cls, txt); a.close(); b.close(); };
+  a.onicecandidate = e => e.candidate && b.addIceCandidate(e.candidate).catch(() => {}); b.onicecandidate = e => e.candidate && a.addIceCandidate(e.candidate).catch(() => {});
+  a.createDataChannel('x').onopen = async () => { const p = await pairOf(a); fin('ok', 'works: connected in ' + ms(t) + ' (' + p + ')'); };
+  setTimeout(() => fin('bad', 'did NOT connect within 10 s (ICE state: ' + a.iceConnectionState + '). This browser or network cannot make direct connections, even to itself.'), 10000);
+  try { const o = await a.createOffer(); await a.setLocalDescription(o); await b.setRemoteDescription(o); const an = await b.createAnswer(); await b.setLocalDescription(an); await a.setRemoteDescription(an); } catch (e) { fin('bad', 'error: ' + e.message); }
+}
+probe(); loopback();
+
+// live log of the connection steps of one DataConnection (this tab's side)
+function watch(conn, role) {
+  const log = [], cnt = { host: 0, srflx: 0, relay: 0 }, t = performance.now(); let n = 0;
+  const note = x => { log.push(((performance.now() - t) / 1000).toFixed(1) + 's ' + x); set('s3c', 'na', role + ' side, ICE: ' + log.join(' | ')); };
+  const iv = setInterval(() => { const pc = conn.peerConnection; if (!pc) { if (n++ > 100) clearInterval(iv); return; } clearInterval(iv);
+    pc.addEventListener('iceconnectionstatechange', () => note(pc.iceConnectionState));
+    pc.addEventListener('icecandidate', e => { if (e.candidate) { const m = / typ (host|srflx|relay)/.exec(e.candidate.candidate); if (m) cnt[m[1]]++; } else note('gathered host ' + cnt.host + ', srflx ' + cnt.srflx + ', relay ' + cnt.relay); });
+    pc.addEventListener('icecandidateerror', e => note('candidate error ' + (e.errorCode || '') + ' ' + (e.url || ''))); note('started'); }, 30);
+}
+
+// 3. direct connection: host answers pings, joiner measures round trips and reports how the connection was made
+const pathType = conn => pairOf(conn.peerConnection);
 let peer = null;
 const code = () => 'vodjs-nettest-' + ($('code').value.toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'test');
 $('host').onclick = () => {
   if (!window.Peer) return set('s3', 'bad', 'library not loaded (step 1)');
   if (peer) try { peer.destroy(); } catch (_) {}
   set('s3', 'wait', 'starting host...'); set('s3b', 'na', '');
-  peer = new Peer(code());
+  peer = new Peer(code(), { config: cfg() });
   peer.on('open', () => set('s3', 'ok', 'Hosting. Waiting for the other tab to press Join with code "' + $('code').value + '".'));
   peer.on('error', e => set('s3', 'bad', 'host error "' + e.type + '"' + (e.type === 'unavailable-id' ? ': that code is in use, pick another or wait a minute' : '')));
   peer.on('connection', c => {
+    watch(c, 'host');
     c.on('open', async () => { set('s3', 'ok', 'Someone connected.'); set('s3b', 'ok', 'Path: ' + await pathType(c)); });
     c.on('data', m => { if (m && m.t === 'ping') c.send({ t: 'pong', n: m.n, ts: m.ts }); });
   });
@@ -103,12 +148,12 @@ $('join').onclick = () => {
   if (!window.Peer) return set('s3', 'bad', 'library not loaded (step 1)');
   if (peer) try { peer.destroy(); } catch (_) {}
   set('s3', 'wait', 'contacting the connection service...'); set('s3b', 'na', '');
-  const t0 = performance.now(); peer = new Peer(); let conn, rtts = [];
+  const t0 = performance.now(); peer = new Peer(undefined, { config: cfg() }); let conn, rtts = [];
   const giveUp = setTimeout(() => set('s3', 'bad', 'could not connect within 15 s (host not running, wrong code, or a firewall blocks direct connections)'), 15000);
   peer.on('error', e => { clearTimeout(giveUp); set('s3', 'bad', 'error "' + e.type + '"' + (e.type === 'peer-unavailable' ? ': no host with that code; press Host in the other tab first' : '')); });
   peer.on('open', () => {
     set('s3', 'wait', 'looking for the host...');
-    conn = peer.connect(code(), { reliable: true });
+    conn = peer.connect(code(), { reliable: true }); watch(conn, 'join');
     conn.on('open', async () => {
       clearTimeout(giveUp); set('s3', 'wait', 'connected in ' + ms(t0) + '; measuring...');
       conn.on('data', m => { if (m && m.t === 'pong') { rtts.push(performance.now() - m.ts); if (rtts.length < 8) conn.send({ t: 'ping', n: rtts.length, ts: performance.now() }); else done(); } });
