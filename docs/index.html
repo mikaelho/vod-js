@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
-<title>Network test v3</title>
+<title>Network test v4</title>
 <script>
 (function () { const O = window.RTCPeerConnection; if (!O) return;
   window.RTCPeerConnection = function (...a) { const pc = new O(...a); if (window.__onpc) window.__onpc(pc); return pc; };
@@ -26,7 +26,7 @@
 </head>
 <body>
 <main>
-<h1>Network test <small id="ver">v3</small></h1>
+<h1>Network test <small id="ver">v4</small></h1>
 <small>Checks each layer of online play separately. Do steps 1&ndash;2 in any tab; do step 3 in two tabs or on two devices.</small>
 
 <h2>0. This page</h2>
@@ -57,6 +57,11 @@
 
 <h2>5. Message broker route (no direct connection needed)</h2>
 <div class="row wait" id="s5">testing...</div>
+
+<h2>6. Your relay (Cloudflare Worker)</h2>
+<div>Relay address: <input id="relayAddr" placeholder="vod-relay.yourname.workers.dev" style="width:min(100%,330px)"><br>
+Secret: <input id="relayKey" type="password" autocomplete="off" style="width:200px"> <button id="relayBtn">Test relay</button></div>
+<div class="row na" id="s6">enter the relay address and secret (or open this page with ?relay=ADDRESS#key=SECRET), then press Test relay.</div>
 
 <h2>Report</h2>
 <small>Paste this to Claude.</small>
@@ -216,6 +221,42 @@ async function brokerTest() {
   set('s5', out.some(l => l.startsWith('OK')) ? 'ok' : 'bad', out.join('\n'));
 }
 brokerTest();
+
+// 6. your relay: two connections from this page to the relay (as two players), messages sent across and timed. The secret is never shown or put in the report.
+const qp = new URLSearchParams(location.search), hp = new URLSearchParams(location.hash.slice(1));
+$('relayAddr').value = qp.get('relay') || ''; $('relayKey').value = hp.get('key') || qp.get('key') || '';
+const relayBase = a => { a = a.trim().replace(/\/+$/, ''); if (!a) return ''; if (/^https:/.test(a)) return a.replace(/^https:/, 'wss:'); if (/^http:/.test(a)) return a.replace(/^http:/, 'ws:'); if (/^wss?:/.test(a)) return a; return 'wss://' + a; };
+async function relayTest() {
+  const base = relayBase($('relayAddr').value), key = $('relayKey').value.trim(), name = base.replace(/^wss?:\/\//, '');
+  if (!base) return set('s6', 'na', 'not configured: enter the relay address and secret above, then press Test relay.');
+  if (!/^[A-Za-z0-9._-]+$/.test(key)) return set('s6', 'bad', 'the secret is empty or contains characters other than letters, digits, dot, underscore and dash.');
+  set('s6', 'wait', 'testing ' + name + '...');
+  const room = 'nettest' + Math.random().toString(36).slice(2, 7);
+  const open = id => new Promise((res, rej) => {
+    const t = performance.now(); let ws, up = false;
+    try { ws = new WebSocket(base + '/' + room, ['vodjs-relay', 'k.' + key]); } catch (e) { return rej(new Error('bad address (' + e.message + ')')); }
+    const to = setTimeout(() => { try { ws.close(); } catch (_) {} rej(new Error('no answer within 8 s')); }, 8000);
+    ws.onopen = () => ws.send(JSON.stringify({ t: 'hi', id }));
+    ws.onmessage = e => { const m = JSON.parse(e.data); if (m.t === 'ok') { up = true; clearTimeout(to); ws.ms = performance.now() - t; res(ws); } else if (m.t === 'err') { clearTimeout(to); rej(new Error('the relay answered: ' + m.type)); } else if (ws.onrelay) ws.onrelay(m); };
+    ws.onclose = () => { if (!up) { clearTimeout(to); rej(new Error('the connection was refused or lost')); } };
+  });
+  try {
+    const A = await open('ta'), B = await open('tb'), rtts = [];
+    await new Promise(res => {
+      B.onrelay = m => { if (m.t === 'from') B.send(JSON.stringify({ t: 'to', to: m.from, d: m.d })); };
+      const ping = () => A.send(JSON.stringify({ t: 'to', to: 'tb', d: String(performance.now()) }));
+      A.onrelay = m => { if (m.t === 'from') { rtts.push(performance.now() - +m.d); if (rtts.length < 9) ping(); else res(); } else if (m.t === 'err') res(); };
+      ping(); setTimeout(res, 6000);
+    });
+    A.close(); B.close(); const q = rtts.slice(1).sort((a, b) => a - b);
+    set('s6', q.length ? 'ok' : 'bad', q.length ? 'WORKS: ' + name + ' | connect ' + Math.round(A.ms) + ' ms | message A to B and back: median ' + Math.round(q[q.length >> 1]) + ' ms (min ' + Math.round(q[0]) + ', max ' + Math.round(q[q.length - 1]) + ')' : 'connected, but messages did not come back');
+  } catch (e) {
+    let hint = '';
+    try { await fetch(base.replace(/^ws/, 'http'), { mode: 'no-cors', cache: 'no-store' }); hint = ' The relay address is reachable, so the secret is probably wrong (or the relay is not the VoD one).'; } catch (_) { hint = ' The relay address itself is not reachable: check the spelling and that the Worker is deployed.'; }
+    set('s6', 'bad', 'FAILED (' + name + '): ' + e.message + '.' + hint);
+  }
+}
+$('relayBtn').onclick = relayTest; if (qp.get('relay')) relayTest();
 
 // 4. same-browser tabs
 (function () {
