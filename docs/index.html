@@ -3,8 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>VoD real-time v3</title>
-<script async src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js" onerror="window.peerFail=true"></script>
+<title>VoD v4</title>
 <script>/*
 * Copyright (c) 2006-2007 Erin Catto http://www.gphysics.com
 *
@@ -11275,15 +11274,43 @@ if (typeof module !== 'undefined') module.exports = Host;
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <style>
+ :root{--ac:#cfd4da;--ac2:#eef0f2;--line:#3b4048;--mut:#8f969f;--card:rgba(255,255,255,.045)}
  html,body{margin:0;height:100%;overflow:hidden;background:#000 url(assets/spacetile2.png);color:#fff;font-family:Optima,Helvetica,sans-serif;touch-action:none}
  canvas{position:fixed;inset:0;width:100%;height:100%}
  #hud{position:absolute;top:8px;left:10px;font-size:15px;line-height:1.5;pointer-events:none;text-shadow:0 0 4px #000}
- #lobby{position:absolute;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center}
- #box{width:340px;text-align:center}
- input,button,select{font:inherit;padding:8px 12px;margin:4px;border-radius:6px;border:1px solid #e6b3b3;background:rgba(230,179,179,.1);color:#e6b3b3}
- button{cursor:pointer} input{width:150px;text-align:center}
- #msg{margin-top:10px;min-height:3em;color:#ccc;white-space:pre-line}
  #banner{position:absolute;top:40%;width:100%;text-align:center;font-size:42px;display:none;text-shadow:0 0 12px #000}
+ #vb button{font:inherit;padding:8px 12px;border-radius:6px;border:1px solid var(--ac);background:rgba(207,212,218,.08);color:var(--ac);cursor:pointer}
+ /* start dialog */
+ #lobby{position:absolute;inset:0;background:rgba(0,0,0,.84);display:flex;align-items:center;justify-content:center;overflow:auto}
+ #box{width:min(720px,94vw);padding:18px 0;box-sizing:border-box}
+ h1{margin:0 0 16px;font-size:30px;font-weight:600;letter-spacing:.04em}
+ h1 small{font-size:12px;color:var(--mut);font-weight:400;letter-spacing:0;margin-left:6px}
+ h2{margin:0;font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--ac)}
+ .fl{display:flex;flex-direction:column;gap:5px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+ input,select{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:#06070a;color:#fff;font:inherit;font-size:15px;letter-spacing:normal;text-transform:none}
+ input:focus,select:focus{outline:none;border-color:var(--ac)}
+ select:disabled{opacity:.4;border-style:dashed}
+ #code{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.06em}
+ .btn{font:inherit;font-weight:600;padding:11px 14px;border-radius:8px;border:1px solid var(--ac);background:var(--ac);color:#0e1013;cursor:pointer}
+ .btn:hover{background:var(--ac2)} .btn.sec{background:transparent;color:var(--ac)} .btn.sec:hover{background:rgba(207,212,218,.12)}
+ #grid{display:grid;grid-template-columns:3fr 2fr;gap:14px;margin-top:14px}
+ section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:14px}
+ #hj{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto auto auto;column-gap:12px;row-gap:8px}
+ .ch{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ac);padding-bottom:2px;border-bottom:1px solid var(--line)}
+ #solo-s .btn{margin-top:auto}
+ #msg{margin-top:14px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-size:14px;line-height:1.45;color:#d5d9de}
+ #msg .note{color:var(--mut);font-size:12px} #msg .main{margin-top:3px} #msg.err{border-color:#a66;color:#ffc4c4}
+ #panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:14px}
+ .phead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+ .gid{font:600 30px ui-monospace,Menlo,Consolas,monospace;letter-spacing:.08em;line-height:1.1;margin-top:4px}
+ .badge{font-size:11px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);border-radius:999px;padding:5px 11px;color:var(--ac)}
+ #plist{list-style:none;margin:16px 0 12px;padding:0;display:grid;gap:6px}
+ #plist li{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,.05)}
+ .dot{width:12px;height:12px;border-radius:50%;flex:none} .tag{margin-left:auto;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+ #pnote{color:var(--mut);font-size:14px;margin:0 0 14px} #pnote.wait::after{content:'';animation:dots 1.4s steps(1,end) infinite}
+ @keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+ .prow{display:flex;gap:10px} .prow .btn{flex:1}
+ @media (max-width:640px){#grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -11293,24 +11320,42 @@ if (typeof module !== 'undefined') module.exports = Host;
 <div id="vb" style="position:absolute;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;gap:4px"><button id="bnew" style="display:none">New</button><button id="bfit">Fit</button><button id="brt">Route</button><button id="bbuoy">Buoy</button><button id="bin">+</button><button id="bout">−</button></div>
 <div id="err" style="position:absolute;bottom:0;left:0;right:0;background:#400;color:#fcc;font:12px monospace;padding:4px;display:none;white-space:pre-wrap"></div>
 <div id="lobby"><div id="box">
- <h2>Vector of Death - real time <small id="ver" style="font-size:12px;color:#aaa"></small></h2>
- <input id="name" placeholder="Your name" maxlength="14"><br>
- <label style="font-size:14px"><input type="checkbox" id="canhost" style="width:auto"> I can host (laptop or desktop, tab stays open)</label><br>
- <label style="font-size:14px">Connection <select id="conn"><option value="auto">Auto</option><option value="relay">Relay</option><option value="direct">Direct</option><option value="local">Same browser</option></select></label><br>
- <label>Playfield <select id="field"><option value="classic">Rocks</option><option value="planet">Planet</option><option value="caves">Caves</option></select></label><br>
- <div id="caveopts" style="display:none;font-size:14px">Corridor width <input id="corridor" type="number" value="240" min="120" max="480" step="20" style="width:70px"> Openness % <input id="loops" type="number" value="20" min="0" max="100" step="5" style="width:60px"> Roughness % <input id="rough" type="number" value="80" min="0" max="100" step="10" style="width:60px"> Tilt % <input id="tilt" type="number" value="80" min="0" max="100" step="10" style="width:60px"></div>
- <button id="create">Host a game</button> <button id="solo">Practice solo</button><br>
- <input id="code" value="a" placeholder="Game code" maxlength="20" autocapitalize="none" autocomplete="off"><button id="join">Join</button><br>
- <button id="start" style="display:none">Start game</button>
- <div id="msg"></div>
+ <h1>VoD <small id="ver"></small></h1>
+ <label class="fl">Your name<input id="name" placeholder="Your name" maxlength="14" autocomplete="off"></label>
+ <div id="setup">
+  <div id="grid">
+   <section id="online">
+    <h2>Online game</h2>
+    <label class="fl">Game ID<input id="code" value="a" placeholder="Game ID" maxlength="20" autocapitalize="none" autocomplete="off" spellcheck="false"></label>
+    <div id="hj">
+     <div class="ch">Host</div><div class="ch">Join</div>
+     <label class="fl">Playfield<select id="field"><option value="classic">Rocks</option><option value="planet">Planet</option><option value="caves">Caves</option></select></label>
+     <label class="fl">Playfield<select disabled><option>Set by the host</option></select></label>
+     <button class="btn" id="create">Host game</button><button class="btn" id="join">Join game</button>
+    </div>
+   </section>
+   <section id="solo-s">
+    <h2>Solo practice</h2>
+    <label class="fl">Playfield<select id="sfield"><option value="classic">Rocks</option><option value="planet">Planet</option><option value="caves">Caves</option></select></label>
+    <button class="btn sec" id="solo">Start practice</button>
+   </section>
+  </div>
+ </div>
+ <div id="panel" style="display:none">
+  <div class="phead"><div><div class="fl">Game ID</div><div class="gid" id="pgid"></div></div><span class="badge" id="pfield"></span></div>
+  <ul id="plist"></ul>
+  <p id="pnote"></p>
+  <div class="prow"><button class="btn" id="start" style="display:none">Start game</button><button class="btn sec" id="leave">Leave</button></div>
+ </div>
+ <div id="msg" style="display:none"></div>
 </div></div>
-<script>// Bump this on every update; build.py shows it in the page title, the lobby and the in-game sidebar.
-const VERSION = 'v3';
+<script>// Bump this on every update; build.py shows it in the page title, the dialog and the in-game sidebar.
+const VERSION = 'v4';
 </script>
 <script>// Connection layer. Three interchangeable transports with the small PeerJS-like interface the lobby uses:
 //   new T(id)  .id  .on('open' | 'error' | 'connection' | 'disconnected')  .connect(id) -> conn  .destroy()
 //   conn: .on('open' | 'data')  .send(message)
-// - PeerJS (WebRTC, direct browser to browser) comes from the PeerJS library
+// - (PeerJS, direct WebRTC, was tried earlier and dropped: it failed on some browsers and networks)
 // - LocalPeer: tabs of one browser, through BroadcastChannel
 // - RelayPeer: WebSocket relay (relay/worker.js on Cloudflare); needs the relay address and secret in the page address
 // Messages are plain JSON-able objects. Adding another transport means adding another class like these.
@@ -11392,23 +11437,20 @@ const vw = () => $('c').clientWidth, vh = () => $('c').clientHeight;
 let electedDone = false, peer, roster = [], coordConns = [], lobbyConn = null, hostConn = null, sim = null, links = {}, me = 0, iAmHost = false;
 let G = null, snaps = [], fx = [], local = null, sc = 1, ox = 0, oy = 0, pressed = false, lastSend = 0, over = null;
 let netNote = '';
-const msg = t => $('msg').textContent = (netNote ? netNote + '\n' : '') + t, myName = () => $('name').value.trim() || 'Player' + Math.floor(Math.random() * 90 + 10);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// status line under the dialog: the connection note (muted) and the current message; kind 'err' marks a problem
+const msg = (t, kind) => { const el = $('msg'); el.className = kind || ''; el.innerHTML = (netNote ? '<div class="note">' + esc(netNote).replace(/\n/g, '<br>') + '</div>' : '') + (t ? '<div class="main">' + esc(t).replace(/\n/g, '<br>') + '</div>' : ''); el.style.display = netNote || t ? '' : 'none'; };
+const myName = () => $('name').value.trim() || 'Player' + Math.floor(Math.random() * 90 + 10);
 
-// ---------- lobby and host election ----------
-const isMobile = () => matchMedia('(pointer:coarse)').matches || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent), canHost = () => $('canhost').checked;
+// ---------- lobby ----------
 const urlq = new URLSearchParams(location.search);
-// tuning links: ?field=caves&corridor=240&loops=30&seed=7
-if (urlq.get('field')) $('field').value = urlq.get('field');
-if (urlq.get('corridor')) $('corridor').value = urlq.get('corridor');
-if (urlq.get('loops')) $('loops').value = urlq.get('loops');
-if (urlq.get('rough')) $('rough').value = urlq.get('rough');
-if (urlq.get('tilt')) $('tilt').value = urlq.get('tilt');
-const caveOpts = fresh => ({ corridor: +$('corridor').value || 240, loops: Math.max(0, Math.min(100, +$('loops').value || 0)) / 100, rough: $('rough').value === '' ? 80 : +$('rough').value, tilt: $('tilt').value === '' ? 80 : +$('tilt').value, seed: fresh ? null : urlq.get('seed') });
-const showCaveOpts = () => { $('caveopts').style.display = $('field').value === 'caves' ? '' : 'none'; };
-showCaveOpts();
-$('canhost').checked = !isMobile(); // phones and tablets opt out of hosting by default
+// development links: ?field=caves&corridor=240&loops=30&rough=80&tilt=80&seed=7 (cave tuning is not in the dialog)
+if (urlq.get('field')) $('field').value = $('sfield').value = urlq.get('field');
+const num = k => urlq.get(k) === null || urlq.get(k) === '' ? undefined : +urlq.get(k);
+const caveOpts = fresh => ({ corridor: num('corridor'), loops: num('loops') === undefined ? undefined : Math.max(0, Math.min(100, num('loops'))) / 100, rough: num('rough'), tilt: num('tilt'), seed: fresh ? null : urlq.get('seed') });
+const COLS = ['cyan', 'magenta', 'lightgreen', 'yellow', 'orange']; // the ships' colours, in order
 function onIncoming(c, m) {
-  if (m.t === 'hello') { if (roster.length >= 5 || electedDone) { c.send({ t: 'full' }); return; } roster.push({ pid: m.pid, name: m.name, mobile: !!m.mobile, canHost: m.canHost !== false, conn: c }); coordConns.push(c); showRoster(); }
+  if (m.t === 'hello') { if (roster.length >= 5 || electedDone) { c.send({ t: 'full' }); return; } roster.push({ pid: m.pid, name: m.name, conn: c }); coordConns.push(c); showRoster(); }
   else if (m.t === 'join') { links[m.pid] = c; maybeLaunch(); }
   else if (m.t === 'thrust' && sim) { const i = roster.findIndex(r => r.pid === c.metadata_pid); sim.setThrust(i, m.k, m.x, m.y); }
 }
@@ -11416,67 +11458,62 @@ const gameCode = () => ($('code').value.toLowerCase().replace(/[^a-z0-9_-]/g, ''
 function showBlocked(txt) { const d = document.getElementById('err'); d.style.display = 'block'; d.textContent += txt + '\n'; }
 document.addEventListener('securitypolicyviolation', e => showBlocked('Blocked by the page security policy: ' + e.blockedURI + ' (' + e.violatedDirective + ')'));
 addEventListener('pagehide', () => { try { if (peer) peer.destroy(); } catch (_) {} });
-function whenPeerJS(cb) { let n = 0; const iv = setInterval(() => { if (window.Peer || window.peerFail || ++n > 60) { clearInterval(iv); cb(!!window.Peer); } }, 100); }
 function newPeer(id, ready) {
   if (peer) { try { peer.destroy(); } catch (_) {} peer = null; }
-  netNote = ''; const mode = $('conn').value, rc = relayConfig();
-  if (mode === 'relay' && !rc) { msg('No relay is configured. Open this page with ?relay=ADDRESS#key=SECRET in the address.'); return; }
-  // Auto: the relay if configured (most reliable), then a direct connection, then same-browser tabs
-  const chain = mode === 'relay' ? ['relay'] : mode === 'direct' ? ['net'] : mode === 'local' ? ['local'] : (rc ? ['relay'] : []).concat(['net', 'local']);
-  msg('Connecting...'); tryChain(chain, id, ready, '');
+  netNote = ''; msg('Connecting...'); startPeer(relayConfig() ? 'relay' : 'local', id, ready);
 }
-const LABEL = { relay: 'Relay', net: 'Direct connection', local: 'Same-browser mode' };
-function tryChain(chain, id, ready, why) {
-  const kind = chain[0];
-  if (!kind) { msg(why + '\nNothing worked. Solo practice still works.'); return; }
-  const next = reason => tryChain(chain.slice(1), id, ready, (why ? why + '\n' : '') + LABEL[kind] + ' did not work (' + reason + ').');
-  if (kind === 'net') whenPeerJS(ok => ok ? startPeer(kind, id, ready, next, why) : next('the networking library did not load: blocked, or offline'));
-  else startPeer(kind, id, ready, next, why);
-}
-function startPeer(kind, id, ready, next, note) {
-  if (kind === 'local' && typeof BroadcastChannel === 'undefined') return next('not supported by this browser');
+function startPeer(kind, id, ready) {
+  if (kind === 'local' && typeof BroadcastChannel === 'undefined') { msg('This browser cannot connect players here.', 'err'); return; }
   const rc = relayConfig(); let opened = false, dead = false, tm;
-  const fail = why => { if (dead) return; dead = true; clearTimeout(tm); try { p.destroy(); } catch (_) {} next(why); };
-  const p = peer = kind === 'relay' ? new RelayPeer(id, { base: rc.base, key: rc.key, room: 'g-' + gameCode() }) : kind === 'local' ? new LocalPeer(id) : id ? new Peer(id) : new Peer();
-  tm = setTimeout(() => { if (!opened) fail('no answer in ' + (kind === 'relay' ? 8 : 10) + ' seconds'); }, kind === 'relay' ? 8000 : 10000);
-  p.on('open', i => { if (dead) return; opened = true; clearTimeout(tm); netNote = (note ? note + '\n' : '') + 'Connection: ' + (kind === 'relay' ? 'relay (' + rc.host + ')' : kind === 'net' ? 'direct (WebRTC)' : 'same browser only'); ready(i); });
+  const fail = why => { if (dead) return; dead = true; clearTimeout(tm); try { p.destroy(); } catch (_) {} msg((kind === 'relay' ? 'Could not connect to the relay: ' : 'Connection error: ') + why + '.', 'err'); };
+  const p = peer = kind === 'relay' ? new RelayPeer(id, { base: rc.base, key: rc.key, room: 'g-' + gameCode() }) : new LocalPeer(id);
+  tm = setTimeout(() => { if (!opened) fail('no answer in 8 seconds'); }, 8000);
+  p.on('open', i => { if (dead) return; opened = true; clearTimeout(tm); netNote = 'Connection: ' + (kind === 'relay' ? 'relay (' + rc.host + ')' : 'same browser only (development)'); msg(''); ready(i); });
   p.on('error', e => {
     if (dead) return;
-    if (e.type === 'unavailable-id') { dead = true; clearTimeout(tm); msg('The code "' + gameCode() + '" is already in use. Pick another code, or wait a minute if that was your own game.'); }
-    else if (e.type === 'peer-unavailable') msg('No game found with the code "' + gameCode() + '". Check the code, and that the host has pressed Host a game.' + (kind !== 'relay' && !rc ? ' If the host plays through a relay, open this page with ?relay=ADDRESS#key=SECRET too.' : ''));
-    else if (!opened) fail(e.type === 'relay-refused' ? 'refused: wrong secret, or the relay is unreachable' : e.type || 'error'); else msg('Network error (' + e.type + ').');
+    if (e.type === 'unavailable-id') { dead = true; clearTimeout(tm); msg('The game ID "' + gameCode() + '" is already in use. Pick another ID.', 'err'); }
+    else if (e.type === 'peer-unavailable') msg('No game found with the ID "' + gameCode() + '". Check the ID, and that the host has pressed Host game.' + (!rc ? ' To play with others, open this page with the relay address and key.' : ''), 'err');
+    else if (!opened) fail(e.type === 'relay-refused' ? 'the secret is wrong, or the relay is unreachable' : e.type || 'error'); else msg('Network error (' + e.type + ').', 'err');
   });
-  p.on('disconnected', () => { if (opened) msg(kind === 'relay' ? 'Lost the connection to the relay.' : 'Lost the connection to the connection service. Games already running are not affected.'); });
+  p.on('disconnected', () => { if (opened) msg('Lost the connection to the relay.', 'err'); });
   p.on('connection', c => c.on('data', m => { if (m.pid) c.metadata_pid = m.pid; onIncoming(c, m); }));
 }
 const fieldName = f => f === 'planet' ? 'Planet' : f === 'caves' ? 'Caves' : 'Rocks';
-function showRoster() { msg('Game code "' + gameCode() + '" | Players: ' + roster.map(r => r.name).join(', ') + ' | Playfield: ' + fieldName($('field').value)); $('start').style.display = roster.length > 0 ? '' : 'none';
-  coordConns.forEach(c => c.send({ t: 'roster', names: roster.map(r => r.name), field: $('field').value })); }
-$('field').onchange = () => { showCaveOpts(); if (peer && roster.length) showRoster(); };
+function renderLobby(names, field, you, isHost) { // the open-game panel: game ID, playfield, who is in
+  $('setup').style.display = 'none'; $('panel').style.display = ''; $('pgid').textContent = gameCode(); $('pfield').textContent = field ? fieldName(field) : '';
+  $('plist').innerHTML = names.map((n, i) => '<li><span class="dot" style="background:' + COLS[i % COLS.length] + '"></span><span>' + esc(n) + '</span><span class="tag">' + [i === 0 ? 'host' : '', i === you ? 'you' : ''].filter(Boolean).join(' &middot; ') + '</span></li>').join('');
+  $('start').style.display = isHost ? '' : 'none'; $('pnote').className = isHost ? '' : 'wait';
+  $('pnote').textContent = isHost ? 'Share the game ID with the other players, then press Start game when everybody is in.' : 'Waiting for the host to start the game';
+}
+function showRoster() { const names = roster.map(r => r.name), field = $('field').value; renderLobby(names, field, 0, true);
+  coordConns.forEach((c, i) => c.send({ t: 'roster', names, field, you: i + 1 })); }
+function leaveLobby() { try { if (peer) peer.destroy(); } catch (_) {} peer = null; roster = []; coordConns = []; lobbyConn = hostConn = null; links = {}; sim = null; electedDone = false; netNote = ''; msg('');
+  $('panel').style.display = 'none'; $('setup').style.display = ''; }
+$('leave').onclick = leaveLobby;
 $('create').onclick = () => { const name = myName();
-  newPeer('vodjs-' + gameCode(), id => { roster = [{ pid: id, name, mobile: isMobile(), canHost: canHost() }]; showRoster(); }); };
-$('join').onclick = () => { const name = myName(); $('field').disabled = $('corridor').disabled = $('loops').disabled = $('rough').disabled = $('tilt').disabled = true; // the game creator chooses the playfield
+  newPeer('vodjs-' + gameCode(), id => { roster = [{ pid: id, name }]; showRoster(); }); };
+$('join').onclick = () => { const name = myName();
   newPeer(null, id => { msg('Looking for game "' + gameCode() + '"...'); lobbyConn = peer.connect('vodjs-' + gameCode(), { reliable: true });
-    const giveUp = setTimeout(() => msg('Could not reach game "' + gameCode() + '". Check the code and that the host has pressed Host a game. A firewall can also block direct connections between some networks.'), 12000);
-    lobbyConn.on('open', () => { clearTimeout(giveUp); lobbyConn.send({ t: 'hello', pid: id, name, mobile: isMobile(), canHost: canHost() }); msg('Joined. Waiting for the host to start...'); });
+    const giveUp = setTimeout(() => msg('Could not reach game "' + gameCode() + '". Check the ID, and that the host has pressed Host game.', 'err'), 12000);
+    lobbyConn.on('open', () => { clearTimeout(giveUp); lobbyConn.send({ t: 'hello', pid: id, name }); msg(''); renderLobby([], null, -1, false); });
     lobbyConn.on('data', m => {
-      if (m.t === 'full') msg('That game is full or has already started.');
-      if (m.t === 'roster') msg('Players: ' + m.names.join(', ') + ' | Playfield: ' + fieldName(m.field));
+      if (m.t === 'full') { leaveLobby(); msg('That game is full or has already started.', 'err'); }
+      if (m.t === 'roster') renderLobby(m.names, m.field, m.you, false);
       if (m.t === 'host') elected(m.hostId, m.roster, m.field, m.opts);
     }); }); };
-// Host choice: only players who ticked "I can host"; laptops and desktops before phones and tablets; then the game creator, then join order.
+// the game's creator is the host
 $('start').onclick = () => { $('start').style.display = 'none'; electedDone = true;
-  const pool = roster.filter(r => r.canHost), cand = pool.length ? pool : roster, best = cand.find(r => !r.mobile) || cand[0], list = roster.map(r => ({ pid: r.pid, name: r.name }));
-  coordConns.forEach(c => c.send({ t: 'host', hostId: best.pid, roster: list, field: $('field').value, opts: caveOpts() })); elected(best.pid, list, $('field').value, caveOpts()); };
+  const list = roster.map(r => ({ pid: r.pid, name: r.name })), field = $('field').value;
+  coordConns.forEach(c => c.send({ t: 'host', hostId: roster[0].pid, roster: list, field, opts: caveOpts() })); elected(roster[0].pid, list, field, caveOpts()); };
 function elected(hostId, list, field, opts) {
   roster = list; me = list.findIndex(r => r.pid === peer.id); iAmHost = hostId === peer.id;
-  if (iAmHost) { sim = new VodHost(list.map(r => r.name), field, opts); msg('You are the host. Keep this tab visible.'); maybeLaunch(); setTimeout(() => maybeLaunch(true), 8000); }
+  if (iAmHost) { sim = new VodHost(list.map(r => r.name), field, opts); msg('You are the host: keep this tab visible while playing.'); maybeLaunch(); setTimeout(() => maybeLaunch(true), 8000); }
   else { msg('Connecting to the host...'); hostConn = peer.connect(hostId, { reliable: true });
-    setTimeout(() => { if (!G) msg('Could not connect to the host. A firewall may be blocking direct connections between your networks.'); }, 15000);
+    setTimeout(() => { if (!G) msg('Could not connect to the host.', 'err'); }, 15000);
     hostConn.on('open', () => hostConn.send({ t: 'join', pid: peer.id })); hostConn.on('data', onHostMsg); }
 }
 let soloMode = false, soloName = '', loopId = null;
-function startSolo(fresh) { roster = [{ pid: 'me', name: soloName }]; me = 0; iAmHost = true; sim = new VodHost([soloName], $('field').value, caveOpts(fresh)); maybeLaunch(true); }
+function startSolo(fresh) { roster = [{ pid: 'me', name: soloName }]; me = 0; iAmHost = true; sim = new VodHost([soloName], $('sfield').value, caveOpts(fresh)); maybeLaunch(true); }
 $('solo').onclick = () => { soloMode = true; soloName = myName(); startSolo(false); };
 // "New" (solo only): throw the game away and start again with a new random layout and the current settings, for quick tuning
 $('bnew').onclick = () => { clearInterval(loopId); G = null; snaps = []; fx = []; local = null; over = null; $('banner').style.display = 'none'; view.z = 1; view.cx = null; view.cy = null; clock.off = null; ptrs.clear(); mode = null; startSolo(true); };
