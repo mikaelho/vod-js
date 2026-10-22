@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>VoD v4</title>
+<title>VoD v8</title>
 <script>/*
 * Copyright (c) 2006-2007 Erin Catto http://www.gphysics.com
 *
@@ -10886,6 +10886,8 @@ var SHIP = [[0,12],[6,6],[6,0],[12,6],[30,6],[36,12],[36,18],[30,24],[12,24],[6,
 var PLANET = { rad: 90, k: 600000, mass: 8, soft: 8 }; // gravity = k / distance^2: about 10 px/s^2 at 250 px, i.e. a step's drift moves ~45 px
 var MOON_K = PLANET.k / 9; // a moon pulls 1/9 as hard as the planet, so the two cancel 3/4 of the way from the planet to the moon (0.75^2 : 0.25^2 = 9 : 1)
 var MOONS = [{ r: 250, rad: 26, k: MOON_K, w: .15, mass: 4 }, { r: 380, rad: 20, k: MOON_K, w: -.1, mass: 3 }, { r: 520, rad: 32, k: MOON_K, w: .07, mass: 5 }];
+// Weapons (the host can switch them on; one weapon type per game). Cooldown is short; the gun's is half of the others'.
+var WEAPON_CD = 4, GUN = { range: 320, dmg: 10, cd: WEAPON_CD / 2 };
 var WALL_MASS = 2; // caves: a wall hit hurts like hitting something this heavy (a rock is about 3)
 function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; } // seeded random numbers, so a maze can be reproduced
 var COLORS = ['cyan', 'magenta', 'lightgreen', 'yellow', 'orange'];
@@ -10979,9 +10981,9 @@ function Host(names, field, opts) {
   var b2 = Box2D, V = b2.Common.Math.b2Vec2, self = this;
   this.b2 = b2; this.V = V;
   this.world = new b2.Dynamics.b2World(new V(0, 0), true);
-  this.time = 0; this.acc = 0; this.k = 0; this.nextTick = STEP * 2; // first lock after 4s: everyone gets time to plan
+  this.time = 0; this.acc = 0; this.k = 0; this.nextTick = STEP * 2; // the first lock comes after two steps: everyone gets time to plan
   this.leader = 0; this.over = false; this.winner = null; this.events = [];
-  this.ships = []; this.rocks = []; this.buoys = []; this.moons = []; this.grav = null; this.field = field === 'planet' || field === 'caves' ? field : 'classic'; this.W = W; this.H = H; this.walls = null; this.seed = null;
+  this.ships = []; this.rocks = []; this.buoys = []; this.moons = []; this.grav = null; this.field = field === 'planet' || field === 'caves' ? field : 'classic'; this.W = W; this.H = H; this.walls = null; this.seed = null; this.weapon = (opts && opts.weapon) || null;
 
   var L = new b2.Dynamics.b2ContactListener();
   L.BeginContact = function (c) {
@@ -11046,7 +11048,7 @@ function Host(names, field, opts) {
     var s = pick(order), d = [bu1[0] - s[0], bu1[1] - s[1]], len = Math.hypot(d[0], d[1]);
     d = [d[0] / len * 100, d[1] / len * 100];
     var sh = { kind: 'ship', i: i, name: name, color: COLORS[i % COLORS.length], hp: HP, visited: 0, dead: false,
-               q: [[0,0],[0,0],[0,0]], local: SHIP.map(function (p) { return [p[0] - 18, p[1] - 15]; }) };
+               q: [[0,0],[0,0]], zc: 0, local: SHIP.map(function (p) { return [p[0] - 18, p[1] - 15]; }) };
     sh.start = [s[0], s[1]]; sh.inv = 0; sh.respawnAt = 0; sh.dying = false;
     sh.body = self.body(sh, s[0], s[1], hull(sh.local), 0);
     sh.body.SetAngle(Math.atan2(d[1], d[0])); sh.body.SetAngularDamping(0.5);
@@ -11057,7 +11059,7 @@ function Host(names, field, opts) {
 
 Host.prototype.addShip = function (i, name, s, d) { // d: first-step momentum as a vector in px
   var V = this.V, sh = { kind: 'ship', i: i, name: name, color: COLORS[i % COLORS.length], hp: HP, visited: 0, dead: false,
-             q: [[0,0],[0,0],[0,0]], local: SHIP.map(function (p) { return [p[0] - 18, p[1] - 15]; }) };
+             q: [[0,0],[0,0]], zc: 0, local: SHIP.map(function (p) { return [p[0] - 18, p[1] - 15]; }) };
   sh.start = [s[0], s[1]]; sh.inv = 0; sh.respawnAt = 0; sh.dying = false;
   sh.body = this.body(sh, s[0], s[1], hull(sh.local), 0);
   sh.body.SetAngle(Math.atan2(d[1], d[0])); sh.body.SetAngularDamping(0.5);
@@ -11177,15 +11179,51 @@ Host.prototype.before = function () { // move the moons along their orbits, then
 
 Host.prototype.power = function (sh) { return POWER * (100 + Math.max(0, this.leader - sh.visited) * 25) / 100; };
 
+// Final results: most buoys first; a tie goes to whoever reached their last buoy earlier.
+Host.prototype.standings = function () {
+  return this.ships.map(function (s) { return { name: s.name, color: s.color, n: s.visited, t: s.lastAt || 0 }; })
+    .sort(function (a, b) { return b.n - a.n || a.t - b.t; });
+};
+
+// ---- weapons ----
+Host.prototype.fire = function (i) { // the pilot pressed Fire; false when nothing happened (no weapon, cooling down, no target)
+  var sh = this.ships[i];
+  if (!sh || !this.weapon || this.over || sh.dead || this.time < (sh.readyAt || 0)) return false;
+  if (this.weapon === 'gun') return this.shootGun(sh);
+  return false; // the other weapons are not built yet
+};
+Host.prototype.damage = function (t, d) { // weapon damage; wrecks and freshly respawned ships are immune
+  if (t.dead || this.time < t.inv) return;
+  t.hp = Math.max(0, t.hp - d); this.events.push({ e: 'hit', i: t.i, d: Math.round(d) });
+  if (t.hp === 0) { t.dead = true; t.dying = true; }
+};
+Host.prototype.shootGun = function (sh) { // hits the nearest enemy within range that has a clear line of sight
+  var V = this.V, p = sh.body.GetPosition(), x = p.x * S, y = p.y * S, world = this.world;
+  var cands = this.ships.filter(function (o) { return o !== sh && !o.dead; }).map(function (o) { var q = o.body.GetPosition(); return { o: o, d: Math.hypot(q.x * S - x, q.y * S - y) }; })
+    .filter(function (c) { return c.d <= GUN.range; }).sort(function (a, b) { return a.d - b.d; });
+  for (var k = 0; k < cands.length; k++) {
+    var t = cands[k].o, q = t.body.GetPosition(), best = null;
+    world.RayCast(function (fix, pt, nrm, fr) { if (fix.IsSensor() || fix.GetBody() === sh.body) return 1; if (!best || fr < best.fr) best = { fix: fix, pt: pt, fr: fr }; return fr; }, new V(p.x, p.y), new V(q.x, q.y));
+    if (best && best.fix.GetBody() === t.body) {
+      var dx = q.x * S - x, dy = q.y * S - y, len = Math.hypot(dx, dy) || 1;
+      this.damage(t, GUN.dmg); t.body.ApplyImpulse(new V(dx / len * .15, dy / len * .15), t.body.GetWorldCenter()); // a small shove
+      this.events.push({ e: 'shot', i: sh.i, x1: Math.round(x), y1: Math.round(y), x2: Math.round(best.pt.x * S), y2: Math.round(best.pt.y * S), hit: true });
+      sh.readyAt = this.time + GUN.cd; return true;
+    }
+  }
+  return false;
+};
+
 Host.prototype.contact = function (sh, o) {
   if (this.over) return;
   if (o.kind === 'buoy') {
     if (o.n === sh.visited + 1) {
-      sh.visited++; this.leader = Math.max(this.leader, sh.visited); this.events.push({ e: 'buoy', n: o.n, i: sh.i });
-      if (sh.visited === NB) { this.over = true; this.winner = sh.name; this.events.push({ e: 'win', name: sh.name }); }
+      sh.visited++; sh.lastAt = this.time; this.leader = Math.max(this.leader, sh.visited); this.events.push({ e: 'buoy', n: o.n, i: sh.i });
+      if (sh.visited === NB) { this.over = true; this.winner = sh.name; this.events.push({ e: 'win', name: sh.name, res: this.standings() }); }
     }
     return;
   }
+  sh.q = [[0,0],[0,0]]; sh.zc++; // any impact cancels the planned thrusts; the ship keeps the bounce velocity the collision gave it
   if (sh.dead || this.time < sh.inv) return; // a wreck cannot be hurt, and a fresh respawn is briefly invulnerable
   var a = sh.body.GetLinearVelocity(), c = o.body.GetLinearVelocity(), m = o.body.GetMass() || o.mass || 0, dmg = Math.hypot(a.x - c.x, a.y - c.y) * m * 2;
   if (dmg >= 1) this.events.push({ e: 'hit', i: sh.i, d: Math.round(dmg) });
@@ -11198,7 +11236,7 @@ Host.prototype.after = function () {
   for (var n = 0; n < this.ships.length; n++) {
     var sh = this.ships[n];
     if (sh.dying) {
-      sh.dying = false; var p = sh.body.GetPosition(); sh.body.SetActive(false); sh.respawnAt = this.time + 3; sh.q = [[0,0],[0,0],[0,0]];
+      sh.dying = false; var p = sh.body.GetPosition(); sh.body.SetActive(false); sh.respawnAt = this.time + 3; sh.q = [[0,0],[0,0]]; sh.zc++;
       this.events.push({ e: 'boom', i: sh.i, x: p.x * S, y: p.y * S });
     } else if (sh.dead && this.time >= sh.respawnAt && !this.over) this.respawn(sh);
   }
@@ -11212,7 +11250,7 @@ Host.prototype.respawn = function (sh) {
   });
   sh.body.SetPositionAndAngle(new V(pos[0] / S, pos[1] / S), sh.body.GetAngle());
   sh.body.SetLinearVelocity(new V(0, 0)); sh.body.SetAngularVelocity(0); sh.body.SetActive(true);
-  sh.hp = HP; sh.dead = false; sh.inv = this.time + 3; sh.q = [[0,0],[0,0],[0,0]];
+  sh.hp = HP; sh.dead = false; sh.inv = this.time + 3; sh.q = [[0,0],[0,0]]; sh.zc++;
   this.events.push({ e: 'respawn', i: sh.i, x: pos[0], y: pos[1] });
 };
 
@@ -11222,7 +11260,7 @@ Host.prototype.setThrust = function (i, k, x, y) {
   if (!sh || this.over || sh.dead || k !== this.k || !isFinite(x) || !isFinite(y)) return false;
   var len = Math.hypot(x, y), max = this.power(sh);
   if (len > max) { x *= max / len; y *= max / len; }
-  sh.q[2] = [x, y]; return true;
+  sh.q[1] = [x, y]; return true;
 };
 
 // The ship reaches its first thrust point: fire it, lock the next one, open a new 3rd slot.
@@ -11252,7 +11290,7 @@ Host.prototype.step = function (dt) {
 };
 
 Host.prototype.init = function (you) {
-  return { t: 'init', you: you, field: this.field, grav: this.grav, W: this.W, H: this.H, walls: this.walls, seed: this.seed, step: STEP, nb: NB, ship: SHIP,
+  return { t: 'init', you: you, field: this.field, grav: this.grav, W: this.W, H: this.H, walls: this.walls, seed: this.seed, weapon: this.weapon, step: STEP, nb: NB, ship: SHIP,
     players: this.ships.map(function (s) { return { name: s.name, color: s.color }; }),
     buoys: this.buoys.map(function (b) { return [b.n, b.x, b.y]; }),
     rocks: this.rocks.map(function (r) { return r.pts; }) };
@@ -11264,7 +11302,7 @@ Host.prototype.snapshot = function () {
     ships: this.ships.map(function (s) {
       var p = s.body.GetPosition(), v = s.body.GetLinearVelocity();
       return { x: r1(p.x * S), y: r1(p.y * S), a: s.body.GetAngle(), vx: r3(v.x * S), vy: r3(v.y * S),
-               hp: Math.round(s.hp), n: s.visited, dead: s.dead, inv: this.time < s.inv, rs: s.dead ? Math.max(0, s.respawnAt - this.time) : 0, q: s.q.map(function (a) { return a.slice(); }) }; }, this),
+               hp: Math.round(s.hp), n: s.visited, dead: s.dead, inv: this.time < s.inv, zc: s.zc, cd: Math.max(0, (s.readyAt || 0) - this.time), rs: s.dead ? Math.max(0, s.respawnAt - this.time) : 0, q: s.q.map(function (a) { return a.slice(); }) }; }, this),
     pw: this.ships.map(this.power, this),
     rocks: this.rocks.map(function (r) { var p = r.body.GetPosition(); return [r1(p.x * S), r1(p.y * S), r.body.GetAngle()]; }) };
 };
@@ -11278,7 +11316,6 @@ if (typeof module !== 'undefined') module.exports = Host;
  html,body{margin:0;height:100%;overflow:hidden;background:#000 url(assets/spacetile2.png);color:#fff;font-family:Optima,Helvetica,sans-serif;touch-action:none}
  canvas{position:fixed;inset:0;width:100%;height:100%}
  #hud{position:absolute;top:8px;left:10px;font-size:15px;line-height:1.5;pointer-events:none;text-shadow:0 0 4px #000}
- #banner{position:absolute;top:40%;width:100%;text-align:center;font-size:42px;display:none;text-shadow:0 0 12px #000}
  #vb button{font:inherit;padding:8px 12px;border-radius:6px;border:1px solid var(--ac);background:rgba(207,212,218,.08);color:var(--ac);cursor:pointer}
  /* start dialog */
  #lobby{position:absolute;inset:0;background:rgba(0,0,0,.84);display:flex;align-items:center;justify-content:center;overflow:auto}
@@ -11292,10 +11329,13 @@ if (typeof module !== 'undefined') module.exports = Host;
  select:disabled{opacity:.4;border-style:dashed}
  #code{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.06em}
  .btn{font:inherit;font-weight:600;padding:11px 14px;border-radius:8px;border:1px solid var(--ac);background:var(--ac);color:#0e1013;cursor:pointer}
+ .chk{display:flex;align-items:center;gap:8px;font-size:15px;color:#fff;letter-spacing:normal;text-transform:none;min-height:42px} .chk input{width:auto} .chk.dim{color:var(--mut);font-style:italic}
+ #vb #bfire{font-weight:600;background:var(--ac);color:#0e1013} #vb #bfire:disabled{opacity:.45;cursor:default}
+ .badges{display:flex;gap:8px;flex-wrap:wrap}
  .btn:hover{background:var(--ac2)} .btn.sec{background:transparent;color:var(--ac)} .btn.sec:hover{background:rgba(207,212,218,.12)}
  #grid{display:grid;grid-template-columns:3fr 2fr;gap:14px;margin-top:14px}
  section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:14px}
- #hj{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto auto auto;column-gap:12px;row-gap:8px}
+ #hj{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto auto auto auto;column-gap:12px;row-gap:8px}
  .ch{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ac);padding-bottom:2px;border-bottom:1px solid var(--line)}
  #solo-s .btn{margin-top:auto}
  #msg{margin-top:14px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-size:14px;line-height:1.45;color:#d5d9de}
@@ -11310,14 +11350,25 @@ if (typeof module !== 'undefined') module.exports = Host;
  #pnote{color:var(--mut);font-size:14px;margin:0 0 14px} #pnote.wait::after{content:'';animation:dots 1.4s steps(1,end) infinite}
  @keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
  .prow{display:flex;gap:10px} .prow .btn{flex:1}
+ /* end of the race */
+ #end{position:fixed;inset:0;z-index:5;background:#000;opacity:0;pointer-events:none;transition:opacity 1.6s ease;display:flex;align-items:center;justify-content:center}
+ #end.show{opacity:1;pointer-events:auto}
+ #endbox{width:min(460px,92vw);opacity:0;transition:opacity 1s ease}
+ #end.results #endbox{opacity:1}
+ #endbox h2{font-size:13px;margin-bottom:14px}
+ #rlist{list-style:none;margin:0 0 18px;padding:0;display:grid;gap:6px}
+ #rlist li{display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:8px;background:rgba(255,255,255,.05)}
+ #rlist li.win{background:rgba(207,212,218,.14);border:1px solid var(--ac)}
+ #rlist .rk{width:18px;color:var(--mut)} #rlist .rn{font-size:17px} #rlist .rb{font-variant-numeric:tabular-nums;color:var(--ac)} #rlist .tag{margin-left:auto}
+ #endbox .btn{width:100%}
  @media (max-width:640px){#grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="hud"></div>
-<div id="banner"></div>
-<div id="vb" style="position:absolute;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;gap:4px"><button id="bnew" style="display:none">New</button><button id="bfit">Fit</button><button id="brt">Route</button><button id="bbuoy">Buoy</button><button id="bin">+</button><button id="bout">−</button></div>
+<div id="end"><div id="endbox"><h2>Race finished</h2><ol id="rlist"></ol><button class="btn" id="again">Lobby</button></div></div>
+<div id="vb" style="position:absolute;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;gap:4px"><button id="bfire" style="display:none">Fire</button><button id="bnew" style="display:none">New</button><button id="bfit">Fit</button><button id="brt">Route</button><button id="bbuoy">Buoy</button><button id="bin">+</button><button id="bout">−</button></div>
 <div id="err" style="position:absolute;bottom:0;left:0;right:0;background:#400;color:#fcc;font:12px monospace;padding:4px;display:none;white-space:pre-wrap"></div>
 <div id="lobby"><div id="box">
  <h1>VoD <small id="ver"></small></h1>
@@ -11331,18 +11382,22 @@ if (typeof module !== 'undefined') module.exports = Host;
      <div class="ch">Host</div><div class="ch">Join</div>
      <label class="fl">Playfield<select id="field"><option value="classic">Rocks</option><option value="planet">Planet</option><option value="caves">Caves</option></select></label>
      <label class="fl">Playfield<select disabled><option>Set by the host</option></select></label>
+     <label class="fl">Options<span class="chk"><input type="checkbox" id="weaponsOn"> Weapons</span></label>
+     <label class="fl">Options<span class="chk dim">Set by the host</span></label>
      <button class="btn" id="create">Host game</button><button class="btn" id="join">Join game</button>
     </div>
    </section>
    <section id="solo-s">
     <h2>Solo practice</h2>
     <label class="fl">Playfield<select id="sfield"><option value="classic">Rocks</option><option value="planet">Planet</option><option value="caves">Caves</option></select></label>
+    <label class="fl">Weapon<select id="sweapon"></select></label>
     <button class="btn sec" id="solo">Start practice</button>
    </section>
   </div>
  </div>
  <div id="panel" style="display:none">
-  <div class="phead"><div><div class="fl">Game ID</div><div class="gid" id="pgid"></div></div><span class="badge" id="pfield"></span></div>
+  <div class="phead"><div><div class="fl">Game ID</div><div class="gid" id="pgid"></div></div><div class="badges"><span class="badge" id="pfield"></span><span class="badge" id="pwbadge" style="display:none"></span></div></div>
+  <label class="fl" id="pweaprow" style="display:none;margin-top:14px">Weapon<select id="pweapon"></select></label>
   <ul id="plist"></ul>
   <p id="pnote"></p>
   <div class="prow"><button class="btn" id="start" style="display:none">Start game</button><button class="btn sec" id="leave">Leave</button></div>
@@ -11350,7 +11405,7 @@ if (typeof module !== 'undefined') module.exports = Host;
  <div id="msg" style="display:none"></div>
 </div></div>
 <script>// Bump this on every update; build.py shows it in the page title, the dialog and the in-game sidebar.
-const VERSION = 'v4';
+const VERSION = 'v8';
 </script>
 <script>// Connection layer. Three interchangeable transports with the small PeerJS-like interface the lobby uses:
 //   new T(id)  .id  .on('open' | 'error' | 'connection' | 'disconnected')  .connect(id) -> conn  .destroy()
@@ -11449,9 +11504,16 @@ if (urlq.get('field')) $('field').value = $('sfield').value = urlq.get('field');
 const num = k => urlq.get(k) === null || urlq.get(k) === '' ? undefined : +urlq.get(k);
 const caveOpts = fresh => ({ corridor: num('corridor'), loops: num('loops') === undefined ? undefined : Math.max(0, Math.min(100, num('loops'))) / 100, rough: num('rough'), tilt: num('tilt'), seed: fresh ? null : urlq.get('seed') });
 const COLS = ['cyan', 'magenta', 'lightgreen', 'yellow', 'orange']; // the ships' colours, in order
+const WEAPONS = [['gun', 'Gun', true], ['missile', 'Missile', false], ['mine', 'Mine', false], ['hammer', 'Hammer', false], ['harpoon', 'Harpoon', false]]; // [id, label, built yet?]
+const fillWeapons = (sel, none) => { sel.innerHTML = (none ? '<option value="none">None</option>' : '') + WEAPONS.map(w => '<option value="' + w[0] + '"' + (w[2] ? '' : ' disabled') + '>' + w[1] + (w[2] ? '' : ' (soon)') + '</option>').join(''); };
+fillWeapons($('sweapon'), true); fillWeapons($('pweapon'), false);
+const weaponLabel = id => (WEAPONS.find(w => w[0] === id) || [0, ''])[1];
+const hostWeapon = () => $('weaponsOn').checked ? $('pweapon').value : null; // the weapon of an online game: only when the host switched weapons on
+const gameOpts = (fresh, weapon) => Object.assign(caveOpts(fresh), { weapon });
 function onIncoming(c, m) {
   if (m.t === 'hello') { if (roster.length >= 5 || electedDone) { c.send({ t: 'full' }); return; } roster.push({ pid: m.pid, name: m.name, conn: c }); coordConns.push(c); showRoster(); }
   else if (m.t === 'join') { links[m.pid] = c; maybeLaunch(); }
+  else if (m.t === 'fire' && sim) { const i = roster.findIndex(r => r.pid === c.metadata_pid); sim.fire(i); }
   else if (m.t === 'thrust' && sim) { const i = roster.findIndex(r => r.pid === c.metadata_pid); sim.setThrust(i, m.k, m.x, m.y); }
 }
 const gameCode = () => ($('code').value.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[-_]+|[-_]+$/g, '') || 'a'); // the code is not secret: anyone who types it can join
@@ -11479,17 +11541,22 @@ function startPeer(kind, id, ready) {
   p.on('connection', c => c.on('data', m => { if (m.pid) c.metadata_pid = m.pid; onIncoming(c, m); }));
 }
 const fieldName = f => f === 'planet' ? 'Planet' : f === 'caves' ? 'Caves' : 'Rocks';
-function renderLobby(names, field, you, isHost) { // the open-game panel: game ID, playfield, who is in
+function renderLobby(names, field, you, isHost, weapon) { // the open-game panel: game ID, playfield, who is in
   $('setup').style.display = 'none'; $('panel').style.display = ''; $('pgid').textContent = gameCode(); $('pfield').textContent = field ? fieldName(field) : '';
   $('plist').innerHTML = names.map((n, i) => '<li><span class="dot" style="background:' + COLS[i % COLS.length] + '"></span><span>' + esc(n) + '</span><span class="tag">' + [i === 0 ? 'host' : '', i === you ? 'you' : ''].filter(Boolean).join(' &middot; ') + '</span></li>').join('');
+  $('pweaprow').style.display = isHost && $('weaponsOn').checked ? '' : 'none'; $('pwbadge').style.display = !isHost && weapon ? '' : 'none'; $('pwbadge').textContent = weapon ? 'Weapon: ' + weaponLabel(weapon) : '';
   $('start').style.display = isHost ? '' : 'none'; $('pnote').className = isHost ? '' : 'wait';
   $('pnote').textContent = isHost ? 'Share the game ID with the other players, then press Start game when everybody is in.' : 'Waiting for the host to start the game';
 }
-function showRoster() { const names = roster.map(r => r.name), field = $('field').value; renderLobby(names, field, 0, true);
-  coordConns.forEach((c, i) => c.send({ t: 'roster', names, field, you: i + 1 })); }
-function leaveLobby() { try { if (peer) peer.destroy(); } catch (_) {} peer = null; roster = []; coordConns = []; lobbyConn = hostConn = null; links = {}; sim = null; electedDone = false; netNote = ''; msg('');
+function showRoster() { const names = roster.map(r => r.name), field = $('field').value, weapon = hostWeapon(); renderLobby(names, field, 0, true, weapon);
+  coordConns.forEach((c, i) => c.send({ t: 'roster', names, field, weapon, you: i + 1 })); }
+$('pweapon').onchange = () => { if (roster.length) showRoster(); };
+function leaveLobby() { try { if (peer) peer.destroy(); } catch (_) {} peer = null; iAmHost = false; roster = []; coordConns = []; lobbyConn = hostConn = null; links = {}; sim = null; electedDone = false; netNote = ''; msg('');
   $('panel').style.display = 'none'; $('setup').style.display = ''; }
 $('leave').onclick = leaveLobby;
+// back to the start dialog from a finished (or abandoned) game: throw the game state away and leave the connection
+function newGame() { clearInterval(loopId); resetGameState(); soloMode = false;
+  leaveLobby(); $('lobby').style.display = ''; $('bnew').style.display = 'none'; $('hud').innerHTML = ''; }
 $('create').onclick = () => { const name = myName();
   newPeer('vodjs-' + gameCode(), id => { roster = [{ pid: id, name }]; showRoster(); }); };
 $('join').onclick = () => { const name = myName();
@@ -11498,13 +11565,13 @@ $('join').onclick = () => { const name = myName();
     lobbyConn.on('open', () => { clearTimeout(giveUp); lobbyConn.send({ t: 'hello', pid: id, name }); msg(''); renderLobby([], null, -1, false); });
     lobbyConn.on('data', m => {
       if (m.t === 'full') { leaveLobby(); msg('That game is full or has already started.', 'err'); }
-      if (m.t === 'roster') renderLobby(m.names, m.field, m.you, false);
+      if (m.t === 'roster') renderLobby(m.names, m.field, m.you, false, m.weapon);
       if (m.t === 'host') elected(m.hostId, m.roster, m.field, m.opts);
     }); }); };
 // the game's creator is the host
 $('start').onclick = () => { $('start').style.display = 'none'; electedDone = true;
-  const list = roster.map(r => ({ pid: r.pid, name: r.name })), field = $('field').value;
-  coordConns.forEach(c => c.send({ t: 'host', hostId: roster[0].pid, roster: list, field, opts: caveOpts() })); elected(roster[0].pid, list, field, caveOpts()); };
+  const list = roster.map(r => ({ pid: r.pid, name: r.name })), field = $('field').value, opts = gameOpts(false, hostWeapon());
+  coordConns.forEach(c => c.send({ t: 'host', hostId: roster[0].pid, roster: list, field, opts })); elected(roster[0].pid, list, field, opts); };
 function elected(hostId, list, field, opts) {
   roster = list; me = list.findIndex(r => r.pid === peer.id); iAmHost = hostId === peer.id;
   if (iAmHost) { sim = new VodHost(list.map(r => r.name), field, opts); msg('You are the host: keep this tab visible while playing.'); maybeLaunch(); setTimeout(() => maybeLaunch(true), 8000); }
@@ -11513,10 +11580,10 @@ function elected(hostId, list, field, opts) {
     hostConn.on('open', () => hostConn.send({ t: 'join', pid: peer.id })); hostConn.on('data', onHostMsg); }
 }
 let soloMode = false, soloName = '', loopId = null;
-function startSolo(fresh) { roster = [{ pid: 'me', name: soloName }]; me = 0; iAmHost = true; sim = new VodHost([soloName], $('sfield').value, caveOpts(fresh)); maybeLaunch(true); }
+function startSolo(fresh) { roster = [{ pid: 'me', name: soloName }]; me = 0; iAmHost = true; sim = new VodHost([soloName], $('sfield').value, gameOpts(fresh, $('sweapon').value === 'none' ? null : $('sweapon').value)); maybeLaunch(true); }
 $('solo').onclick = () => { soloMode = true; soloName = myName(); startSolo(false); };
 // "New" (solo only): throw the game away and start again with a new random layout and the current settings, for quick tuning
-$('bnew').onclick = () => { clearInterval(loopId); G = null; snaps = []; fx = []; local = null; over = null; $('banner').style.display = 'none'; view.z = 1; view.cx = null; view.cy = null; clock.off = null; ptrs.clear(); mode = null; startSolo(true); };
+$('bnew').onclick = () => { clearInterval(loopId); resetGameState(); startSolo(true); };
 function maybeLaunch(force) {
   if (!sim || sim.started) return;
   if (!force && !roster.every((r, i) => i === me || links[r.pid])) return;
@@ -11532,12 +11599,12 @@ function maybeLaunch(force) {
 <script>// ---------- client: state, input ----------
 const clock = { off: null };
 function onHostMsg(m) {
-  if (m.t === 'init') { G = m; me = m.you; $('lobby').style.display = 'none'; return; }
+  if (m.t === 'init') { resetGameState(); G = m; me = m.you; $('lobby').style.display = 'none'; return; }
   if (m.t !== 'snap') return;
   const now = performance.now(), smp = m.ht * 1000 - now; m.at = now; m.tickH = m.ht + m.tin / 1000; // next lock, in host game time
   clock.off = clock.off === null ? smp : clock.off + (smp - clock.off) * .05; // low-pass: arrival-time jitter must not move anything on screen
   snaps.push(m); if (snaps.length > 20) snaps.shift();
-  m.ev.forEach(e => { if (e.e === 'win') over = e.name; else { fx.push(Object.assign({ at: now }, e));
+  m.ev.forEach(e => { if (e.e === 'win') { over = e.name; showResults(e.res || []); } else { fx.push(Object.assign({ at: now }, e));
     if (e.e === 'respawn' && e.i === me) { view.z = Math.min(8, .9 / base()); view.cx = e.x; view.cy = e.y; } } }); // my ship is back: zoom to it
 }
 const latest = () => snaps[snaps.length - 1];
@@ -11552,6 +11619,13 @@ function fly(st, T, dur, pts) { // integrate dur seconds from [x, y, vx, vy] at 
   for (let i = 0; i < n; i++) { const a = accel(x, y, T + i * h); vx += a[0] * h; vy += a[1] * h; x += vx * h; y += vy * h; if (pts) pts.push([x, y]); }
   return [x, y, vx, vy];
 }
+function fireWeapon() { // Fire button or space bar
+  if (!G || !G.weapon || over) return;
+  if (iAmHost) sim.fire(me); else hostConn && hostConn.send({ t: 'fire' });
+}
+$('bfire').onclick = fireWeapon;
+addEventListener('keydown', e => { if (e.code === 'Space' && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); fireWeapon(); } });
+const FREE = 1; // two planned thrusts: slot 0 is locked (fires at the next tick), slot FREE can still be moved
 let wallIdx = null;
 function nearWall(x, y, R) { // is (x, y) within R px (R <= 24) of a cave wall? uses a grid of outline segments, built on first use
   if (!wallIdx || wallIdx.src !== G.walls) {
@@ -11565,35 +11639,40 @@ function nearWall(x, y, R) { // is (x, y) within R px (R <= 24) of a cave wall? 
 }
 function plan() { // my ship's expected route: where each thrust fires (F), where it would be without thrust (C), where it ends up (H)
   const I = interp(performance.now() - 100), s = I.s, mine = I.ships[me], tr = Math.max(0, s.tickH - I.th);
-  const q = s.ships[me].q.map(a => a.slice()); if (local && local.k === s.k) q[2] = [local.x, local.y];
+  const q = s.ships[me].q.map(a => a.slice()); if (local && local.k === s.k && local.zc === s.ships[me].zc) q[FREE] = [local.x, local.y]; // an impact (zc changes) cancels what I had set
   let T = I.th, cur = [mine.x, mine.y, mine.vx, mine.vy]; const path = [[mine.x, mine.y]], F = [], C = [], H = []; let at2 = null;
   cur = fly(cur, T, tr, path); T += tr;
-  for (let i = 0; i < 3; i++) { F.push([cur[0], cur[1]]); C.push(fly(cur, T, G.step).slice(0, 2)); if (i === 2) at2 = { st: cur, T };
+  for (let i = 0; i <= FREE; i++) { F.push([cur[0], cur[1]]); C.push(fly(cur, T, G.step).slice(0, 2)); if (i === FREE) at2 = { st: cur, T };
     cur = fly([cur[0], cur[1], cur[2] + q[i][0] / G.step, cur[3] + q[i][1] / G.step], T, G.step, path); T += G.step; H.push([cur[0], cur[1]]); }
   let crash = null, crashStep = null;
-  if (G.walls) for (let i = 0; i < path.length && !crash; i += 3) { const p = path[i]; if (nearWall(p[0], p[1], 20)) { crash = p; path.length = i + 1; const n0 = Math.max(1, Math.ceil(tr * 60)); crashStep = i <= n0 ? 0 : Math.min(2, Math.floor((i - n0 - 1) / Math.ceil(G.step * 60))); } }
-  return { F, C, H, q, path, at2, crash, crashStep, pw: s.pw[me], k: s.k, tickH: s.tickH };
+  if (G.walls) for (let i = 0; i < path.length && !crash; i += 3) { const p = path[i]; if (nearWall(p[0], p[1], 20)) { crash = p; path.length = i + 1; const n0 = Math.max(1, Math.ceil(tr * 60)); crashStep = i <= n0 ? 0 : Math.min(FREE, Math.floor((i - n0 - 1) / Math.ceil(G.step * 60))); } }
+  return { F, C, H, q, path, at2, crash, crashStep, pw: s.pw[me], k: s.k, zc: s.ships[me].zc, tickH: s.tickH };
 }
 function setThird(e) {
   if (!G || !snaps.length || over || latest().ships[me].dead) return;
   const P = plan(), w = [(e.clientX - ox) / sc, (e.clientY - oy) / sc];
-  let x = w[0] - P.C[2][0], y = w[1] - P.C[2][1];
+  let x = w[0] - P.C[FREE][0], y = w[1] - P.C[FREE][1];
   const lim = () => { const len = Math.hypot(x, y); if (len > P.pw) { x *= P.pw / len; y *= P.pw / len; } }; lim();
   for (let it = 0; it < 3 && G.grav; it++) { const a = P.at2.st, e = fly([a[0], a[1], a[2] + x / G.step, a[3] + y / G.step], P.at2.T, G.step); x += w[0] - e[0]; y += w[1] - e[1]; lim(); } // with gravity, aim so the dot lands where you put it
-  local = { k: P.k, x, y };
+  local = { k: P.k, zc: P.zc, x, y };
   const n = performance.now(); if (n - lastSend < 40 && e.type === 'pointermove') return; lastSend = n;
   if (iAmHost) sim.setThrust(me, P.k, x, y); else hostConn && hostConn.send({ t: 'thrust', k: P.k, x, y });
 }
-// View: drag on empty space to pan, pinch or wheel to zoom, buttons below. Drag inside the third circle (or its dot) to set the thrust.
+// View: drag on empty space to pan, pinch or wheel to zoom, buttons below. Drag inside the free circle (or its dot) to set the thrust.
 const view = { z: 1, cx: null, cy: null }, ptrs = new Map(); let mode = null, buoyFx = -1e9;
+// Everything a game leaves behind on this page. Called whenever a game starts (and when leaving one), so nothing carries over from the previous game.
+function resetGameState() {
+  G = null; snaps = []; fx = []; local = null; over = null; pressed = false; lastSend = 0; wallIdx = null; buoyFx = -1e9;
+  view.z = 1; view.cx = null; view.cy = null; clock.off = null; ptrs.clear(); mode = null; hideResults();
+}
 const base = () => Math.min(vw() / G.W, vh() / G.H);
 function zoomAt(x, y, f) { const wx = (x - ox) / sc, wy = (y - oy) / sc; view.z = Math.min(6, Math.max(.5, view.z * f)); const s2 = base() * view.z;
   view.cx = wx - (x - vw() / 2) / s2; view.cy = wy - (y - vh() / 2) / s2; }
-function fitRoute() { if (!G || snaps.length < 2) return; const P = plan(), sh = interp(performance.now() - 100).ships[me], pts = [...P.path, P.C[2]], pad = P.pw + 40;
+function fitRoute() { if (!G || snaps.length < 2) return; const P = plan(), sh = interp(performance.now() - 100).ships[me], pts = [...P.path, P.C[FREE]], pad = P.pw + 40;
   const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]), x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad, y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
   view.z = Math.min(6, Math.max(.5, Math.min(vw() / (x1 - x0), vh() / (y1 - y0)) / base())); view.cx = (x0 + x1) / 2; view.cy = (y0 + y1) / 2; }
 function hitThrust(e) { if (!G || snaps.length < 2 || over || latest().ships[me].dead) return false; const P = plan();
-  return Math.hypot(e.clientX - (P.H[2][0] * sc + ox), e.clientY - (P.H[2][1] * sc + oy)) < 70 || Math.hypot(e.clientX - (P.C[2][0] * sc + ox), e.clientY - (P.C[2][1] * sc + oy)) < Math.max(P.pw * sc * 1.3, 80); }
+  return Math.hypot(e.clientX - (P.H[FREE][0] * sc + ox), e.clientY - (P.H[FREE][1] * sc + oy)) < 70 || Math.hypot(e.clientX - (P.C[FREE][0] * sc + ox), e.clientY - (P.C[FREE][1] * sc + oy)) < Math.max(P.pw * sc * 1.3, 80); }
 $('bfit').onclick = () => { view.z = 1; view.cx = G && G.W / 2; view.cy = G && G.H / 2; };
 $('brt').onclick = fitRoute;
 $('bbuoy').onclick = () => { if (!G || snaps.length < 2) return; const sh = interp(performance.now() - 100).ships[me], b = G.buoys.find(b => b[0] === latest().ships[me].n + 1); if (!b) return;
@@ -11690,11 +11769,14 @@ function frame() {
       ctx.strokeStyle = G.players[f.i].color; ctx.lineWidth = 4; circle(f.x, f.y, 20 + 140 * t); ctx.stroke();
       for (let k = 0; k < 16; k++) { const an = k * Math.PI / 8 + (k % 3) * .2, sp = 60 + (k * 37 % 100); circle(f.x + Math.cos(an) * sp * t * 2, f.y + Math.sin(an) * sp * t * 2, 4 * (1 - t) + 1); ctx.fill(); } ctx.restore(); }
     if (f.e === 'respawn' && t < 1) { ctx.save(); ctx.globalAlpha = t; ctx.strokeStyle = G.players[f.i].color; ctx.lineWidth = 4; circle(f.x, f.y, 100 * (1 - t) + 10); ctx.stroke(); ctx.restore(); } });
+  fx.filter(f => f.e === 'shot').forEach(f => { const a = 1 - (now - f.at) / 260; if (a <= 0) return; // gun tracer
+    ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, 2 / sc); ctx.beginPath(); ctx.moveTo(f.x1, f.y1); ctx.lineTo(f.x2, f.y2); ctx.stroke();
+    if (f.hit) { ctx.fillStyle = '#fff'; circle(f.x2, f.y2, 8 + 10 * (1 - a)); ctx.fill(); } ctx.restore(); });
   // my plan
   if (!s.ships[me].dead && !over) {
     const P = plan(), col = G.players[me].color, sh = I.ships[me];
     ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.globalAlpha = 1; poly(P.path); ctx.stroke();
-    P.C.forEach((f, i) => { const tip = P.H[i], open = i === 2;
+    P.C.forEach((f, i) => { const tip = P.H[i], open = i === FREE;
       ctx.globalAlpha = open ? .5 : .25; ctx.fillStyle = P.crashStep !== null && i >= P.crashStep ? '#f33' : col; circle(f[0], f[1], P.pw); ctx.fill();
       ctx.globalAlpha = 1; ctx.lineWidth = open ? 3 : 1.5;
       circle(tip[0], tip[1], open ? 14 : 8); open ? ctx.fill() : ctx.stroke();
@@ -11705,7 +11787,18 @@ function frame() {
 requestAnimationFrame(frame);
 setInterval(() => { if (!G || !snaps.length) return; const s = latest();
   $('hud').innerHTML = G.players.map((p, i) => `<span style="color:${p.color}">${p.name}${i === me ? ' (you)' : ''}</span>: ${s.ships[i].n}/${G.nb}, hull ${s.ships[i].hp}%${s.ships[i].dead ? ' - DESTROYED, back in ' + Math.ceil(s.ships[i].rs) + 's' : ''}` + (s.pw[i] > 100 ? `, underdog +${Math.round(s.pw[i] - 100)}%` : '')).join('<br>') + (iAmHost ? '<br><small>you are the host: keep this tab visible</small>' : '') + (G.seed != null ? '<br><small>maze seed ' + G.seed + '</small>' : '') + '<br><small>' + VERSION + '</small>';
-  const b = $('banner'); if (over) { b.style.display = 'block'; b.textContent = 'Winner: ' + over; } }, 200);
+  const fb = $('bfire'); fb.style.display = G.weapon ? '' : 'none';
+  if (G.weapon) { const cd = Math.max(0, s.ships[me].cd - (performance.now() - s.at) / 1000); fb.disabled = cd > 0 || s.ships[me].dead || !!over; fb.textContent = cd > 0 ? weaponLabel(G.weapon) + ' ' + cd.toFixed(1) + ' s' : 'Fire ' + weaponLabel(G.weapon); }
+  }, 200);
+</script>
+<script>// End of the race: fade to black, then the results (most buoys first) and a Lobby button.
+function showResults(res) {
+  $('rlist').innerHTML = res.map((r, i) => '<li' + (i === 0 ? ' class="win"' : '') + '><span class="rk">' + (i + 1) + '</span><span class="dot" style="background:' + r.color + '"></span><span class="rn">' + esc(r.name) + '</span><span class="tag">' + (i === 0 ? 'winner' : '') + '</span><span class="rb">' + r.n + ' / ' + G.nb + '</span></li>').join('');
+  $('end').classList.add('show'); setTimeout(() => { if (over) $('end').classList.add('results'); }, 1800); // the picture fades out first, then the results appear
+}
+function hideResults() { $('end').classList.remove('show', 'results'); }
+// The Lobby button goes back to the start dialog (solo or online); a new game then starts from scratch.
+$('again').onclick = newGame;
 </script>
 </body>
 </html>
