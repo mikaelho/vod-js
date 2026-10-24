@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>VoD v35</title>
+<title>VoD v36</title>
 <style>
  :root{--ac:#cfd4da;--ac2:#eef0f2;--line:#3b4048;--mut:#8f969f;--card:rgba(255,255,255,.045)}
  html,body{margin:0;height:100%;overflow:hidden;background:#000 url(assets/spacetile2.png);color:#fff;font-family:Optima,Helvetica,sans-serif;touch-action:none}
@@ -11640,7 +11640,7 @@ VOD.playfield('pulsars', {
     init: function (h) { return { pulsars: h.pfs.pulsars.map(function (p) { return { x: p.x, y: p.y, P: p.P, phase: p.phase, th0: p.th0, w: p.w }; }) }; }
   },
   client: {
-    sound: function (e, v, T) { if (e.e === 'pulse') { T.tone(260, 70, .5, 'sine', .5 * v); T.noise(.5, 'bandpass', 900, 200, .6 * v); } else if (e.e === 'pulsehit') { T.tone(220, 90, .25, 'triangle', .6 * v); T.noise(.2, 'bandpass', 1800, 400, .8 * v); } },
+    sound: function (e, v, T) { if (e.e === 'pulse') { T.noise(.8, 'bandpass', 200, 700, .9 * v, 0, .25); T.tone(90, 130, .7, 'sawtooth', .1 * v, 0, .2); } else if (e.e === 'pulsehit') { T.tone(700, 650, .3, 'sine', .3 * v); T.tone(1050, 1000, .25, 'sine', .2 * v); T.noise(.2, 'bandpass', 1500, 600, .3 * v, 0, .02); } },
     fx: function (f, now) { if (f.e !== 'pulsehit') return; const t = (now - f.at) / 500; if (t >= 1) return; ctx.save(); ctx.globalAlpha = 1 - t; ctx.strokeStyle = '#bdf'; ctx.lineWidth = Math.max(3, 3 / sc); circle(f.x, f.y, 25 + 60 * t); ctx.stroke(); ctx.restore(); }, // a ring where a pulse hit a ship
     draw: function (G, I) {
       const t = I.th;
@@ -11746,7 +11746,7 @@ VOD.weapon('gun', {
     }
   },
   client: {
-    sound: function (e, v, T) { if (e.e === 'shot') { T.noise(.13, 'highpass', 4500, 1000, 1 * v); T.tone(900, 150, .16, 'square', .5 * v); T.tone(1800, 300, .08, 'sawtooth', .25 * v); } }, // a sharp crack
+    sound: function (e, v, T) { if (e.e === 'shot') { T.tone(1500, 260, .16, 'sawtooth', .3 * v); T.tone(750, 130, .14, 'square', .12 * v); T.noise(.08, 'bandpass', 2500, 1200, .3 * v); } }, // a sharp crack
     fx: function (f, now) { // draws one host event (f.e, f.at = arrival time) per frame; events live 0.7 s
       if (f.e !== 'shot') return;
       const a = 1 - (now - f.at) / 260; if (a <= 0) return; // gun tracer
@@ -11812,9 +11812,9 @@ VOD.weapon('hammer', {
   },
   client: {
     sound: function (e, v, T) {
-      if (e.e === 'deploy') { T.tone(120, 520, .4, 'sawtooth', .3 * v); T.noise(.4, 'bandpass', 500, 1500, .8 * v); }
-      else if (e.e === 'retract') { T.tone(520, 120, .3, 'sawtooth', .3 * v); T.noise(.3, 'bandpass', 1500, 500, .7 * v); }
-      else if (e.e === 'bonk') { T.tone(310, 300, .35, 'triangle', .6 * v); T.tone(487, 480, .3, 'square', .15 * v); T.noise(.05, 'highpass', 4000, 1500, .5 * v); }
+      if (e.e === 'deploy') { T.tone(120, 520, .4, 'sawtooth', .25 * v, 0, .08); T.noise(.4, 'bandpass', 500, 1500, .6 * v, 0, .1); }
+      else if (e.e === 'retract') { T.tone(520, 120, .3, 'sawtooth', .25 * v, 0, .05); T.noise(.3, 'bandpass', 1500, 500, .5 * v, 0, .06); }
+      else if (e.e === 'bonk') { T.tone(310, 300, .4, 'triangle', .45 * v); T.tone(487, 480, .35, 'sine', .2 * v); T.tone(780, 770, .25, 'sine', .1 * v); }
     },
     verb: function (s, me) { return (s.w.hammers || []).some(function (m) { return m[2] === me; }) ? 'Retract' : 'Deploy'; }, // button: "Deploy Hammer" / "Retract Hammer"
     interp: function (a, b, L) { return { hammers: (a.hammers || []).map(function (m) { const n = (b.hammers || []).find(o => o[2] === m[2]); return n ? [L(m[0], n[0]), L(m[1], n[1]), m[2]] : m; }) }; },
@@ -11857,7 +11857,7 @@ VOD.weapon('harpoon', {
     }
   },
   client: {
-    sound: function (e, v, T) { if (e.e === 'harpoon') { T.tone(700, 200, .4, 'sawtooth', .45 * v); T.noise(.2, 'bandpass', 1500, 500, .9 * v); T.tone(1400, 400, .15, 'square', .15 * v); } }, // a twang
+    sound: function (e, v, T) { if (e.e === 'harpoon') { T.tone(700, 200, .4, 'sawtooth', .4 * v); T.tone(1400, 400, .3, 'triangle', .15 * v) } }, // a twang
     fx: function (f, now) { // a rope between the two ships that goes slack as they close in
       if (f.e !== 'harpoon') return;
       const a = 1 - (now - f.at) / 600; if (a <= 0 || !snaps.length) return;
@@ -11911,7 +11911,7 @@ VOD.weapon('mine', {
     }
   },
   client: {
-    sound: function (e, v, T) { if (e.e === 'drop') { T.tone(300, 120, .14, 'square', .4 * v); T.tone(1000, 1000, .08, 'sine', .4 * v, .14); } },
+    sound: function (e, v, T) { if (e.e === 'drop') { T.tone(500, 380, .12, 'triangle', .3 * v); T.tone(1000, 1000, .12, 'sine', .3 * v, .12); } },
     verb: 'Drop', // the button reads "Drop Mine"
     canDetonate: function (s, me) { return (s.w.mines || []).some(function (m) { return m[2] === me; }); },
     interp: function (a, b, L) { return { mines: (a.mines || []).map(function (m) { const n = (b.mines || []).find(o => o[2] === m[2]); return n ? [L(m[0], n[0]), L(m[1], n[1]), m[2], n[3]] : m; }) }; },
@@ -11978,7 +11978,7 @@ VOD.weapon('missile', {
     }
   },
   client: {
-    sound: function (e, v, T) { if (e.e === 'launch') { T.tone(320, 120, .18, 'triangle', .5 * v); T.noise(.6, 'bandpass', 500, 1800, 1.2 * v); T.tone(250, 800, .55, 'sawtooth', .12 * v); } }, // a thunk, then a rising whoosh
+    sound: function (e, v, T) { if (e.e === 'launch') { T.noise(.7, 'bandpass', 400, 1600, 1.2 * v, 0, .12); T.tone(200, 700, .65, 'sawtooth', .12 * v, 0, .1); } }, // a thunk, then a rising whoosh
     canDetonate: function (s, me) { return (s.w.missiles || []).some(function (m) { return m[2] === me; }); }, // then the Fire button detonates
     interp: function (a, b, L) { return { missiles: (a.missiles || []).map(function (m) { const n = (b.missiles || []).find(o => o[2] === m[2]); return n ? [L(m[0], n[0]), L(m[1], n[1]), m[2], L(m[3], n[3]), L(m[4], n[4])] : m; }) }; },
     draw: function (G, I, now) {
@@ -12001,7 +12001,7 @@ VOD.weapon('missile', {
 })();
 </script>
 <script>// Bump this on every update; build.py shows it in the page title, the dialog and the in-game sidebar.
-const VERSION = 'v35';
+const VERSION = 'v36';
 </script>
 <script>// Connection layer. Three interchangeable transports with the small PeerJS-like interface the lobby uses:
 //   new T(id)  .id  .on('open' | 'error' | 'connection' | 'disconnected')  .connect(id) -> conn  .destroy()
@@ -12387,9 +12387,9 @@ function sndInit() { // browsers only allow audio after a tap or key press: call
 ['pointerdown', 'keydown', 'touchstart'].forEach(t => addEventListener(t, sndInit, { passive: true }));
 function envelope(g, t, vol, dur, att = .008) { g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(.0002, vol), t + att); g.gain.exponentialRampToValueAtTime(.0001, t + dur); }
 const T = {
-  tone(f0, f1, dur, type, vol, delay = 0) { // an oscillator gliding from f0 to f1 Hz
+  tone(f0, f1, dur, type, vol, delay = 0, att = .008) { // an oscillator gliding from f0 to f1 Hz
     const c = SND.ctx, t = c.currentTime + delay, o = c.createOscillator(), g = c.createGain(); o.type = type; o.frequency.setValueAtTime(f0, t); if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
-    envelope(g, t, vol, dur); o.connect(g); g.connect(SND.master); o.start(t); o.stop(t + dur + .03);
+    envelope(g, t, vol, dur, att); o.connect(g); g.connect(SND.master); o.start(t); o.stop(t + dur + .03);
   },
   noise(dur, kind, f0, f1, vol, delay = 0, att = .008) { // filtered noise ('lowpass' | 'highpass' | 'bandpass') with the filter sweeping from f0 to f1 Hz
     const c = SND.ctx, t = c.currentTime + delay, s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain(); s.buffer = SND.noise; s.loop = true; f.type = kind; f.Q.value = kind === 'bandpass' ? 2 : .7;
@@ -12398,13 +12398,13 @@ const T = {
 };
 const CORE_SOUNDS = {
   fire: (e, v) => { const p = .5 + .5 * Math.min(1.2, Math.hypot(e.x, e.y) / 100); T.noise(.42, 'bandpass', 350, 1100, 1.6 * v * p, 0, .1); T.noise(.3, 'lowpass', 700, 200, .9 * v * p, 0, .06); T.tone(110, 70, .35, 'sine', .3 * v * p); }, // a thrust fires: a soft low whoosh that swells in, no bright hiss
-  hit: (e, v) => { const k = Math.min(1, (e.d || 10) / 40); T.tone(170, 45, .2, 'sine', (.25 + .5 * k) * v); T.noise(.09, 'lowpass', 2800, 400, .35 * k * v + .08 * v); }, // collision or weapon damage
-  boom: (e, v) => { T.noise(1.2, 'lowpass', 2500, 150, 1.1 * v); T.tone(140, 40, 1, 'sine', .9 * v); T.tone(600, 120, .5, 'sawtooth', .25 * v); T.noise(.15, 'highpass', 5000, 1500, .5 * v); }, // a ship destroyed: crack, then a rumble
-  blast: (e, v) => { T.noise(.7, 'lowpass', 2500, 70, .8 * v); T.tone(110, 30, .6, 'sine', .7 * v); }, // missile or mine explosion
+  hit: (e, v) => { const k = Math.min(1, (e.d || 10) / 40); T.noise(.2, 'bandpass', 1200, 350, (.5 + .8 * k) * v, 0, .004); T.tone(210, 150, .14, 'sawtooth', (.12 + .2 * k) * v); T.tone(330, 300, .1, 'square', .08 * v); }, // collision or weapon damage
+  boom: (e, v) => { T.noise(1.4, 'lowpass', 1800, 120, 1.2 * v, 0, .03); T.tone(80, 45, 1.2, 'sawtooth', .22 * v, 0, .04); T.tone(500, 90, .6, 'sawtooth', .12 * v); }, // a ship destroyed: crack, then a rumble
+  blast: (e, v) => { T.noise(.9, 'lowpass', 1800, 90, 1 * v, 0, .02); T.tone(90, 50, .7, 'sawtooth', .2 * v, 0, .03); }, // missile or mine explosion
   respawn: (e, v) => { [330, 440, 660].forEach((f, i) => T.tone(f, f, .2, 'triangle', .4 * v, i * .08)); },
   buoy: (e, v) => { T.tone(880, 880, .4, 'sine', .3 * v); T.tone(1320, 1320, .55, 'sine', .25 * v, .09); },
   win: () => { [523, 659, 784, 1047].forEach((f, i) => T.tone(f, f, i === 3 ? 1 : .25, 'triangle', .3, i * .16)); T.tone(262, 262, 1.2, 'sine', .15, .48); }, // the race is over
-  nofire: (e, v) => { T.tone(160, 100, .15, 'square', .2 * v); }, // the weapon would not fire
+  nofire: (e, v) => { T.tone(180, 140, .18, 'square', .12 * v, 0, .02); }, // the weapon would not fire
   arm: () => { T.tone(660, 880, .07, 'square', .15); }, disarm: () => { T.tone(660, 440, .07, 'square', .15); }
 };
 function sfx(e) {
