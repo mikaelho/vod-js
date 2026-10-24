@@ -2,8 +2,104 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover"><meta name="color-scheme" content="dark">
-<title>VoD real-time</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>VoD v30</title>
+<style>
+ :root{--ac:#cfd4da;--ac2:#eef0f2;--line:#3b4048;--mut:#8f969f;--card:rgba(255,255,255,.045)}
+ html,body{margin:0;height:100%;overflow:hidden;background:#000 url(assets/spacetile2.png);color:#fff;font-family:Optima,Helvetica,sans-serif;touch-action:none}
+ canvas{position:fixed;inset:0;width:100%;height:100%}
+ #hud{position:absolute;top:8px;left:10px;font-size:15px;line-height:1.5;pointer-events:none;text-shadow:0 0 4px #000}
+ #vb button{font:inherit;padding:8px 12px;border-radius:6px;border:1px solid var(--ac);background:rgba(207,212,218,.08);color:var(--ac);cursor:pointer}
+ /* start dialog */
+ #lobby{position:absolute;inset:0;background:rgba(0,0,0,.84);display:flex;align-items:center;justify-content:center;overflow:auto}
+ #box{width:min(720px,94vw);padding:18px 0;box-sizing:border-box}
+ h1{margin:0 0 16px;font-size:30px;font-weight:600;letter-spacing:.04em}
+ h1 small{font-size:12px;color:var(--mut);font-weight:400;letter-spacing:0;margin-left:6px}
+ h2{margin:0;font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--ac)}
+ .fl{display:flex;flex-direction:column;gap:5px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+ input,select{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:#06070a;color:#fff;font:inherit;font-size:15px;letter-spacing:normal;text-transform:none}
+ input:focus,select:focus{outline:none;border-color:var(--ac)}
+ select:disabled{opacity:.4;border-style:dashed}
+ #code{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.06em}
+ .btn{font:inherit;font-weight:600;padding:11px 14px;border-radius:8px;border:1px solid var(--ac);background:var(--ac);color:#0e1013;cursor:pointer}
+ .chk{display:flex;align-items:center;gap:8px;font-size:15px;color:#fff;letter-spacing:normal;text-transform:none;min-height:42px} .chk input{width:auto} .chk.dim{color:var(--mut);font-style:italic}
+ #vb #bfire{font-weight:600;background:var(--ac);color:#0e1013} #vb #bfire:disabled{opacity:.45;cursor:default}
+ #vb #bfire.armed{background:rgba(255,255,255,.12);color:#fff;box-shadow:0 0 0 2px var(--ac) inset}
+ #toast{position:fixed;left:50%;bottom:calc(72px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:8px 14px;border-radius:8px;font-size:14px;display:none;z-index:4;pointer-events:none}
+ .badges{display:flex;gap:8px;flex-wrap:wrap}
+ .btn:hover{background:var(--ac2)} .btn.sec{background:transparent;color:var(--ac)} .btn.sec:hover{background:rgba(207,212,218,.12)}
+ #grid{display:grid;grid-template-columns:3fr 2fr;gap:14px;margin-top:14px}
+ section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:14px}
+ #hj{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto auto auto auto;column-gap:12px;row-gap:8px}
+ .ch{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ac);padding-bottom:2px;border-bottom:1px solid var(--line)}
+ #solo-s .btn{margin-top:auto}
+ #msg{margin-top:14px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-size:14px;line-height:1.45;color:#d5d9de}
+ #msg .note{color:var(--mut);font-size:12px} #msg .main{margin-top:3px} #msg.err{border-color:#a66;color:#ffc4c4}
+ #panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:14px}
+ .phead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+ .gid{font:600 30px ui-monospace,Menlo,Consolas,monospace;letter-spacing:.08em;line-height:1.1;margin-top:4px}
+ .badge{font-size:11px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);border-radius:999px;padding:5px 11px;color:var(--ac)}
+ #plist{list-style:none;margin:16px 0 12px;padding:0;display:grid;gap:6px}
+ #plist li{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,.05)}
+ .dot{width:12px;height:12px;border-radius:50%;flex:none} .tag{margin-left:auto;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+ #pnote{color:var(--mut);font-size:14px;margin:0 0 14px} #pnote.wait::after{content:'';animation:dots 1.4s steps(1,end) infinite}
+ @keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+ .prow{display:flex;gap:10px} .prow .btn{flex:1}
+ /* end of the race */
+ #end{position:fixed;inset:0;z-index:5;background:#000;opacity:0;pointer-events:none;transition:opacity 1.6s ease;display:flex;align-items:center;justify-content:center}
+ #end.show{opacity:1;pointer-events:auto}
+ #endbox{width:min(460px,92vw);opacity:0;transition:opacity 1s ease}
+ #end.results #endbox{opacity:1}
+ #endbox h2{font-size:13px;margin-bottom:14px}
+ #rlist{list-style:none;margin:0 0 18px;padding:0;display:grid;gap:6px}
+ #rlist li{display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:8px;background:rgba(255,255,255,.05)}
+ #rlist li.win{background:rgba(207,212,218,.14);border:1px solid var(--ac)}
+ #rlist .rk{width:18px;color:var(--mut)} #rlist .rn{font-size:17px} #rlist .rb{font-variant-numeric:tabular-nums;color:var(--ac)} #rlist .tag{margin-left:auto}
+ #endbox .btn{width:100%}
+ @media (max-width:640px){#grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="toast"></div>
+<div id="end"><div id="endbox"><h2>Race finished</h2><ol id="rlist"></ol><button class="btn" id="again">Lobby</button></div></div>
+<div id="vb" style="position:absolute;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;gap:4px"><button id="bfire" style="display:none">Fire</button><button id="bsnd">Sound</button><button id="bnew" style="display:none">New</button></div>
+<div id="err" style="position:absolute;bottom:0;left:0;right:0;background:#400;color:#fcc;font:12px monospace;padding:4px;display:none;white-space:pre-wrap"></div>
+<div id="lobby"><div id="box">
+ <h1>VoD <small id="ver"></small></h1>
+ <label class="fl">Your name<input id="name" placeholder="Your name" maxlength="14" autocomplete="off"></label>
+ <div id="setup">
+  <div id="grid">
+   <section id="online">
+    <h2>Online game</h2>
+    <label class="fl">Game ID<input id="code" value="a" placeholder="Game ID" maxlength="20" autocapitalize="none" autocomplete="off" spellcheck="false"></label>
+    <div id="hj">
+     <div class="ch">Host</div><div class="ch">Join</div>
+     <label class="fl">Playfield<select id="field"></select></label>
+     <label class="fl">Playfield<select disabled><option>Set by the host</option></select></label>
+     <label class="fl">Options<span class="chk"><input type="checkbox" id="weaponsOn"> Weapons</span></label>
+     <label class="fl">Options<span class="chk dim">Set by the host</span></label>
+     <button class="btn" id="create">Host game</button><button class="btn" id="join">Join game</button>
+    </div>
+   </section>
+   <section id="solo-s">
+    <h2>Solo practice</h2>
+    <label class="fl">Playfield<select id="sfield"></select></label>
+    <label class="fl">Weapon<select id="sweapon"></select></label>
+    <button class="btn sec" id="solo">Start practice</button>
+   </section>
+  </div>
+ </div>
+ <div id="panel" style="display:none">
+  <div class="phead"><div><div class="fl">Game ID</div><div class="gid" id="pgid"></div></div><div class="badges"><span class="badge" id="pfield"></span><span class="badge" id="pwbadge" style="display:none"></span></div></div>
+  <label class="fl" id="pweaprow" style="display:none;margin-top:14px">Weapon<select id="pweapon"></select></label>
+  <ul id="plist"></ul>
+  <p id="pnote"></p>
+  <div class="prow"><button class="btn" id="start" style="display:none">Start game</button><button class="btn sec" id="leave">Leave</button></div>
+ </div>
+ <div id="msg" style="display:none"></div>
+</div></div>
 <script>/*
 * Copyright (c) 2006-2007 Erin Catto http://www.gphysics.com
 *
@@ -10877,108 +10973,62 @@ Box2D.postDefs = [];
 var i;
 for (i = 0; i < Box2D.postDefs.length; ++i) Box2D.postDefs[i]();
 delete Box2D.postDefs;</script>
-<script>// Real-time VoD simulation. Runs only in the host's browser (or Node for tests).
-// Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
-// Real-time VoD simulation. Runs only in the host's browser (or Node for tests).
-// Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
-// Real-time VoD simulation. Runs only in the host's browser (or Node for tests).
-// Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
-// Real-time VoD simulation. Runs only in the host's browser (or Node for tests).
-// Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
-// Real-time VoD simulation. Runs only in the host's browser (or Node for tests).
-// Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
-// Real-time VoD simulation. Runs only in the host's browser (or Node for tests).
-// Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
-// Real-time VoD simulation. Runs only in the host's browser (or Node for tests).
-// Needs the global Box2D from lib/Box2dWeb-2.1.a.3.js.
-(function (root) {
-var S = 30, STEP = 3, W = 2100, H = 1300, CELL = 100, NB = 5, NR = 10, POWER = 100, HP = 100, FIX = 1 / 60;
-var SHIP = [[0,12],[6,6],[6,0],[12,6],[30,6],[36,12],[36,18],[30,24],[12,24],[6,30],[6,24],[0,18]];
-// "Planet" playfield: a planet and three moons on circular orbits. Gravity (k / distance^2, softened) bends ship paths; engines can still escape it.
-var PLANET = { rad: 90, k: 600000, mass: 8, soft: 8 }; // gravity = k / distance^2: about 10 px/s^2 at 250 px, i.e. a step's drift moves ~45 px
-var MOON_K = PLANET.k / 9; // a moon pulls 1/9 as hard as the planet, so the two cancel 3/4 of the way from the planet to the moon (0.75^2 : 0.25^2 = 9 : 1)
-var MOONS = [{ r: 250, rad: 26, k: MOON_K, w: .15, mass: 4 }, { r: 380, rad: 20, k: MOON_K, w: -.1, mass: 3 }, { r: 520, rad: 32, k: MOON_K, w: .07, mass: 5 }];
-var COLORS = ['cyan', 'magenta', 'lightgreen', 'yellow', 'orange'];
-var rnd = function (a, b) { return a + Math.random() * (b - a); };
-var pick = function (arr) { return arr.splice(Math.floor(Math.random() * arr.length), 1)[0]; };
+<script>// VoD registry: shared constants, small helpers, and the three plug-in lists (ships, playfields, weapons). See src/README.md.
+// A module file calls VOD.ship(id, def), VOD.playfield(id, def) or VOD.weapon(id, def); build.py includes every file in those folders, nothing else to edit.
+(function () {
+  var VOD = globalThis.VOD = { K: {}, u: {}, ships: {}, playfields: {}, weapons: {} };
+  VOD.K = { S: 30, STEP: 3, W: 2100, H: 1300, CELL: 100, NB: 5, POWER: 100, WEAPON_CD: 4, FIX: 1 / 60, COLORS: ['cyan', 'magenta', 'lightgreen', 'yellow', 'orange'] };
+  // S: pixels per physics metre. STEP: seconds between thrust locks (the "tick"). W, H: default playfield size. FIX: physics step.
+  VOD.u = {
+    mulberry: function (a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }, // seeded random numbers
+    rnd: function (a, b) { return a + Math.random() * (b - a); },
+    pick: function (arr) { return arr.splice(Math.floor(Math.random() * arr.length), 1)[0]; }, // removes and returns a random element
+    hull: function (p) { // convex hull (monotone chain)
+      p = p.slice().sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
+      var cr = function (o, a, b) { return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0]); }, lo = [], up = [], i;
+      for (i = 0; i < p.length; i++) { while (lo.length > 1 && cr(lo[lo.length-2], lo[lo.length-1], p[i]) <= 0) lo.pop(); lo.push(p[i]); }
+      for (i = p.length - 1; i >= 0; i--) { while (up.length > 1 && cr(up[up.length-2], up[up.length-1], p[i]) <= 0) up.pop(); up.push(p[i]); }
+      lo.pop(); up.pop(); return lo.concat(up);
+    }
+  };
+  var reg = function (kind) { return function (id, def) { def.id = id; def.order = def.order || 50; VOD[kind][id] = def; return def; }; };
+  VOD.ship = reg('ships'); VOD.playfield = reg('playfields'); VOD.weapon = reg('weapons');
+  VOD.list = function (kind) { return Object.keys(VOD[kind]).map(function (k) { return VOD[kind][k]; }).sort(function (a, b) { return a.order - b.order || (a.id < b.id ? -1 : 1); }); };
+})();
+</script>
+<script>// VoD host: the generic real-time simulation. Runs only in the host's browser (or Node for tests). Needs the global Box2D (lib/Box2dWeb-2.1.a.3.js).
+// It knows nothing about particular playfields or weapons: those plug in through VOD.playfields[id].host and VOD.weapons[id].host (see src/README.md).
+(function () {
+var K = VOD.K, S = K.S, STEP = K.STEP, W = K.W, H = K.H, NB = K.NB, FIX = K.FIX, COLORS = K.COLORS, hull = VOD.u.hull, pick = VOD.u.pick;
 
-function hull(p) { // monotone chain
-  p = p.slice().sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
-  var cr = function (o, a, b) { return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0]); }, lo = [], up = [], i;
-  for (i = 0; i < p.length; i++) { while (lo.length > 1 && cr(lo[lo.length-2], lo[lo.length-1], p[i]) <= 0) lo.pop(); lo.push(p[i]); }
-  for (i = p.length - 1; i >= 0; i--) { while (up.length > 1 && cr(up[up.length-2], up[up.length-1], p[i]) <= 0) up.pop(); up.push(p[i]); }
-  lo.pop(); up.pop(); return lo.concat(up);
-}
-
-function Host(names, field) {
+function Host(names, field, opts) {
+  opts = opts || {};
   var b2 = Box2D, V = b2.Common.Math.b2Vec2, self = this;
-  this.b2 = b2; this.V = V;
-  this.world = new b2.Dynamics.b2World(new V(0, 0), true);
-  this.time = 0; this.acc = 0; this.k = 0; this.nextTick = STEP * 2; // first lock after 4s: everyone gets time to plan
+  this.b2 = b2; this.V = V; this.world = new b2.Dynamics.b2World(new V(0, 0), true);
+  this.time = 0; this.acc = 0; this.k = 0; this.nextTick = STEP * 2; // the first lock comes after two steps: everyone gets time to plan
   this.leader = 0; this.over = false; this.winner = null; this.events = [];
-  this.ships = []; this.rocks = []; this.buoys = []; this.moons = []; this.grav = null; this.field = field === 'planet' ? 'planet' : 'classic';
+  this.ships = []; this.buoys = []; this.loose = [];  // loose: things that can sit on a respawn point and must be moved away (rocks)
+  this.projectiles = [];                              // anything a weapon launches that gravity should pull on: objects with .body
+  this.W = W; this.H = H; this.pfs = {}; this.ws = {}; // pfs / ws: scratch state of the playfield / the weapon
+  this.field = VOD.playfields[field] ? field : 'classic'; this.pf = VOD.playfields[this.field].host;
+  this.weapon = opts.weapon && VOD.weapons[opts.weapon] ? opts.weapon : null; this.wd = this.weapon ? VOD.weapons[this.weapon] : null; this.wh = this.wd ? this.wd.host : {};
+  this.shipDef = VOD.ships[opts.ship] || VOD.ships.standard;
 
   var L = new b2.Dynamics.b2ContactListener();
   L.BeginContact = function (c) {
     var a = c.GetFixtureA().GetBody().GetUserData(), b = c.GetFixtureB().GetBody().GetUserData();
     if (a.kind === 'ship') self.contact(a, b);
     if (b.kind === 'ship') self.contact(b, a);
+    if (a.hit) a.hit(self, b); // projectiles define hit(host, other)
+    if (b.hit) b.hit(self, a);
   };
   this.world.SetContactListener(L);
-
-  var cols = Math.floor(W / CELL), rows = Math.floor(H / CELL), cx = Math.round(cols / 2) - 1, cy = Math.round(rows / 2) - 1, cells = [];
-  for (var i = 1; i < cols - 1; i++) for (var j = 1; j < rows - 1; j++) if (!(i === cx && j === cy)) cells.push([i, j]);
-  var at = function (c) { return [c[0] * CELL + CELL / 2, c[1] * CELL + CELL / 2]; };
-
-  // Everyone starts in the same random corner, on a circle around buoy 1 (so equally far from it), a few degrees apart.
-  var planetField = this.field === 'planet', ctr = [W / 2, H / 2], corner = pick([[0,0],[W,0],[0,H],[W,H]]), n = names.length, starts = [], bu1;
-  if (planetField) {
-    this.grav = { c: ctr, soft: PLANET.soft, planet: { rad: PLANET.rad, k: PLANET.k }, moons: [] };
-    this.planet = { kind: 'planet', mass: PLANET.mass }; this.planet.body = this.body(this.planet, ctr[0], ctr[1], null, PLANET.rad, 'static');
-    MOONS.forEach(function (m) {
-      var o = { kind: 'moon', mass: m.mass, r: m.r, w: m.w, a0: Math.random() * 2 * Math.PI }, p = self.orbit(o, 0);
-      o.body = self.body(o, p[0], p[1], null, m.rad, 'kinematic'); self.moons.push(o); self.grav.moons.push({ r: m.r, w: m.w, a0: o.a0, rad: m.rad, k: m.k });
-    });
-    // buoy 1 sits a quarter turn around the planet from the start corner, so the straight line from the start misses the planet
-    var dd = [corner[0] - ctr[0], corner[1] - ctr[1]], ll = Math.hypot(dd[0], dd[1]), sg = Math.random() < .5 ? 1 : -1;
-    bu1 = [ctr[0] - sg * dd[1] / ll * 520, ctr[1] + sg * dd[0] / ll * 520];
-  } else bu1 = at([cx, cy]);
-  var dc = [W / 2 - corner[0], H / 2 - corner[1]], dl = Math.hypot(dc[0], dc[1]), p0 = [corner[0] + dc[0] / dl * 300, corner[1] + dc[1] / dl * 300];
-  var R = Math.hypot(p0[0] - bu1[0], p0[1] - bu1[1]), th0 = Math.atan2(p0[1] - bu1[1], p0[0] - bu1[0]);
-  for (var sp = 5; sp >= 0; sp--) { // widest spread (5 degrees) that keeps everybody inside the field
-    starts = [];
-    for (i = 0; i < n; i++) { var th = th0 + (i - (n - 1) / 2) * sp * Math.PI / 180; starts.push([bu1[0] + R * Math.cos(th), bu1[1] + R * Math.sin(th)]); }
-    if (starts.every(function (q) { return q[0] > 40 && q[0] < W - 40 && q[1] > 40 && q[1] < H - 40; })) break;
-  }
-  cells = cells.filter(function (c) { var q = at(c); return starts.every(function (st) { return Math.hypot(q[0] - st[0], q[1] - st[1]) > 150; }) && (!planetField || (Math.hypot(q[0] - ctr[0], q[1] - ctr[1]) > PLANET.rad + 150 && Math.hypot(q[0] - bu1[0], q[1] - bu1[1]) > 100)); }); // keep rocks and buoys off the start line
-
-  for (i = 0; i < (planetField ? 0 : NR); i++) { // rocks: 8 random vertices, so the convex hull stays within Box2D's 8 vertex limit
-    var p = at(pick(cells)), size = rnd(50, 80), pts = [];
-    for (var a = 0; a < 8; a++) { var l = rnd(size * .375, size * .5), an = a * Math.PI / 4; pts.push([Math.cos(an) * l, Math.sin(an) * l]); }
-    var r = { kind: 'rock' }; r.pts = hull(pts);
-    r.body = this.body(r, p[0], p[1], r.pts, 0);
-    r.body.SetLinearVelocity(new V(rnd(0, 25) / S, rnd(0, 25) / S)); r.body.SetAngularVelocity(rnd(0, 90) * Math.PI / 180);
-    this.rocks.push(r);
-  }
-  for (i = 1; i <= NB; i++) {
-    var q = i === 1 ? bu1 : at(pick(cells)), bu = { kind: 'buoy', n: i, x: q[0], y: q[1] };
-    bu.body = this.body(bu, q[0], q[1], null, 30); this.buoys.push(bu);
-  }
-  var order = starts.slice();
-  names.forEach(function (name, i) {
-    var s = pick(order), d = [bu1[0] - s[0], bu1[1] - s[1]], len = Math.hypot(d[0], d[1]);
-    d = [d[0] / len * 100, d[1] / len * 100];
-    var sh = { kind: 'ship', i: i, name: name, color: COLORS[i % COLORS.length], hp: HP, visited: 0, dead: false,
-               q: [[0,0],[0,0],[0,0]], local: SHIP.map(function (p) { return [p[0] - 18, p[1] - 15]; }) };
-    sh.start = [s[0], s[1]]; sh.inv = 0; sh.respawnAt = 0; sh.dying = false;
-    sh.body = self.body(sh, s[0], s[1], hull(sh.local), 0);
-    sh.body.SetAngle(Math.atan2(d[1], d[0])); sh.body.SetAngularDamping(0.5);
-    sh.body.SetLinearVelocity(new V(d[0] / (STEP * S), d[1] / (STEP * S))); // same start momentum as the turn-based version
-    self.ships.push(sh);
-  });
+  this.pf.build(this, names, opts); // the playfield creates its obstacles and buoys and places the ships (helpers below)
+  this.markDummy(opts);
 }
 
-Host.prototype.body = function (obj, x, y, pts, radius, solid) {
+// ---- helpers for playfields and weapons ----
+Host.prototype.body = function (obj, x, y, pts, radius, solid) { // solid: 'static' | 'kinematic' | 'dynamic'; without it a circle is a sensor
   var b2 = this.b2, V = this.V, bd = new b2.Dynamics.b2BodyDef();
   bd.type = solid === 'static' ? b2.Dynamics.b2Body.b2_staticBody : solid === 'kinematic' ? b2.Dynamics.b2Body.b2_kinematicBody : b2.Dynamics.b2Body.b2_dynamicBody; bd.position.Set(x / S, y / S); bd.userData = obj;
   var body = this.world.CreateBody(bd), fd = new b2.Dynamics.b2FixtureDef();
@@ -10987,34 +11037,95 @@ Host.prototype.body = function (obj, x, y, pts, radius, solid) {
   else { fd.shape = new b2.Collision.Shapes.b2CircleShape(radius / S); fd.isSensor = !solid; body.SetFixedRotation(true); }
   body.CreateFixture(fd); return body;
 };
-
-Host.prototype.orbit = function (m, t) { var a = m.a0 + m.w * t; return [this.grav.c[0] + m.r * Math.cos(a), this.grav.c[1] + m.r * Math.sin(a)]; };
-Host.prototype.before = function () { // move the moons along their orbits, then pull the ships towards the planet and moons
-  if (!this.grav) return;
-  var V = this.V, self = this, src = [[this.grav.c[0], this.grav.c[1], PLANET.k]];
-  this.moons.forEach(function (m, i) {
-    var p = self.orbit(m, self.time + FIX), c = m.body.GetPosition();
-    m.body.SetLinearVelocity(new V((p[0] / S - c.x) / FIX, (p[1] / S - c.y) / FIX)); src.push([c.x * S, c.y * S, MOONS[i].k]);
+Host.prototype.addShip = function (i, name, s, d) { // d: first-step momentum as a vector in px
+  var V = this.V, def = this.shipDef, sh = { kind: 'ship', i: i, name: name, color: COLORS[i % COLORS.length], hp: def.hp, visited: 0, dead: false,
+             q: [[0,0],[0,0]], zc: 0, local: def.shape.map(function (p) { return [p[0] - 18, p[1] - 15]; }) };
+  sh.start = [s[0], s[1]]; sh.inv = 0; sh.respawnAt = 0; sh.dying = false;
+  sh.body = this.body(sh, s[0], s[1], hull(sh.local), 0);
+  sh.body.SetAngle(Math.atan2(d[1], d[0])); sh.body.SetAngularDamping(0.5);
+  sh.body.SetLinearVelocity(new V(d[0] / (STEP * S), d[1] / (STEP * S)));
+  this.ships.push(sh); return sh;
+};
+Host.prototype.addBuoy = function (n, x, y) { var bu = { kind: 'buoy', n: n, x: x, y: y }; bu.body = this.body(bu, x, y, null, 30); this.buoys.push(bu); return bu; };
+// Everyone starts in the same corner, on a circle around buoy 1 (equally far from it), a few degrees apart. Returns the start points.
+Host.prototype.cornerStarts = function (corner, bu1, n) {
+  var dc = [W / 2 - corner[0], H / 2 - corner[1]], dl = Math.hypot(dc[0], dc[1]), p0 = [corner[0] + dc[0] / dl * 300, corner[1] + dc[1] / dl * 300], starts;
+  var R = Math.hypot(p0[0] - bu1[0], p0[1] - bu1[1]), th0 = Math.atan2(p0[1] - bu1[1], p0[0] - bu1[0]);
+  for (var sp = 5; sp >= 0; sp--) { // widest spread (5 degrees) that keeps everybody inside the field
+    starts = [];
+    for (var i = 0; i < n; i++) { var th = th0 + (i - (n - 1) / 2) * sp * Math.PI / 180; starts.push([bu1[0] + R * Math.cos(th), bu1[1] + R * Math.sin(th)]); }
+    if (starts.every(function (q) { return q[0] > 40 && q[0] < W - 40 && q[1] > 40 && q[1] < H - 40; })) break;
+  }
+  return starts;
+};
+Host.prototype.freeCells = function (starts, extra) { // centres of the grid cells away from the start line (and passing extra(x, y) if given), for rocks and buoys
+  var cols = Math.floor(W / K.CELL), rows = Math.floor(H / K.CELL), cx = Math.round(cols / 2) - 1, cy = Math.round(rows / 2) - 1, out = [];
+  for (var i = 1; i < cols - 1; i++) for (var j = 1; j < rows - 1; j++) {
+    if (i === cx && j === cy) continue; // the middle cell is buoy 1 in the classic field
+    var q = [i * K.CELL + K.CELL / 2, j * K.CELL + K.CELL / 2];
+    if (starts.every(function (st) { return Math.hypot(q[0] - st[0], q[1] - st[1]) > 150; }) && (!extra || extra(q[0], q[1]))) out.push(q);
+  }
+  return out;
+};
+Host.prototype.placeShips = function (names, starts, bu1) { // random order along the start arc, each heading at buoy 1 with the standard first-step momentum
+  var order = starts.slice(), self = this;
+  names.forEach(function (name, i) { var s = pick(order), d = [bu1[0] - s[0], bu1[1] - s[1]], len = Math.hypot(d[0], d[1]); self.addShip(i, name, s, [d[0] / len * 100, d[1] / len * 100]); });
+};
+Host.prototype.sight = function (from, to, ignore) { // first solid thing on the straight line between two bodies: { clear: it is `to`, pt: where the line ends }; ignore(userData) skips objects
+  var V = this.V, p = from.GetPosition(), q = to.GetPosition(), best = null;
+  this.world.RayCast(function (fix, pt, nrm, fr) { var u = fix.GetBody().GetUserData(); if (fix.IsSensor() || fix.GetBody() === from || (ignore && ignore(u))) return 1; if (!best || fr < best.fr) best = { body: fix.GetBody(), pt: pt, fr: fr }; return fr; }, new V(p.x, p.y), new V(q.x, q.y));
+  return { clear: !!best && best.body === to, pt: best && best.pt };
+};
+Host.prototype.nofire = function (sh, why) { this.events.push({ e: 'nofire', i: sh.i, why: why }); return false; };
+Host.prototype.damage = function (t, d) { // weapon damage; wrecks and freshly respawned ships are immune
+  if (t.dead || this.time < t.inv) return;
+  t.hp = Math.max(0, t.hp - d); this.events.push({ e: 'hit', i: t.i, d: Math.round(d) });
+  if (t.hp === 0) { t.dead = true; t.dying = true; }
+};
+// An explosion hurts like a heavy collision: any ship within B.r loses hull (B.dmg at the centre, half of that at the edge), is shoved away (B.push) and loses its planned thrusts.
+Host.prototype.blast = function (x, y, B) {
+  var V = this.V, self = this;
+  this.ships.forEach(function (s) {
+    if (s.dead || self.time < s.inv) return;
+    var p = s.body.GetPosition(), dx = p.x * S - x, dy = p.y * S - y, d = Math.hypot(dx, dy); if (d > B.r) return;
+    var f = 1 - .5 * d / B.r, ux = d > 1 ? dx / d : 1, uy = d > 1 ? dy / d : 0;
+    s.q = [[0,0],[0,0]]; s.zc++; s.body.ApplyImpulse(new V(ux * B.push * f, uy * B.push * f), s.body.GetWorldCenter()); self.damage(s, B.dmg * f);
   });
-  this.ships.forEach(function (sh) {
-    if (sh.dead) return;
-    var p = sh.body.GetPosition(), x = p.x * S, y = p.y * S, ax = 0, ay = 0, m = sh.body.GetMass();
-    src.forEach(function (g) { var dx = g[0] - x, dy = g[1] - y, d2 = dx * dx + dy * dy + PLANET.soft * PLANET.soft, f = g[2] / (d2 * Math.sqrt(d2)); ax += dx * f; ay += dy * f; });
-    sh.body.ApplyForce(new V(m * ax / S, m * ay / S), sh.body.GetWorldCenter());
-  });
+  this.events.push({ e: 'blast', x: Math.round(x), y: Math.round(y), r: B.r });
 };
 
-Host.prototype.power = function (sh) { return POWER * (100 + Math.max(0, this.leader - sh.visited) * 25) / 100; };
+// ---- game rules ----
+Host.prototype.power = function (sh) { return this.shipDef.power * (100 + Math.max(0, this.leader - sh.visited) * 25) / 100; };
+Host.prototype.markDummy = function (opts) { // solo practice: the last ship is a practice target that stands still and never races
+  if (!opts || !opts.dummy) return;
+  var d = this.ships[this.ships.length - 1]; d.dummy = true; d.body.SetLinearVelocity(new this.V(0, 0)); d.body.SetLinearDamping(3); d.body.SetAngularDamping(3);
+};
+Host.prototype.standings = function () { // final results: most buoys first; a tie goes to whoever reached their last buoy earlier
+  return this.ships.filter(function (s) { return !s.dummy; }).map(function (s) { return { name: s.name, color: s.color, n: s.visited, t: s.lastAt || 0 }; })
+    .sort(function (a, b) { return b.n - a.n || a.t - b.t; });
+};
+
+// The pilot fired (for targeted weapons: at ship number `target`); false when nothing happened.
+Host.prototype.fire = function (i, target) {
+  var sh = this.ships[i];
+  if (!sh || !this.wd || this.over || sh.dead || this.time < (sh.readyAt || 0)) return false;
+  var t = null;
+  if (this.wd.targeted) { t = this.ships[target]; if (!t || t === sh || t.dead) return this.nofire(sh, 'no target'); }
+  return this.wh.fire(this, sh, t);
+};
+Host.prototype.detonate = function (i) { return !!(this.wh.detonate && this.wh.detonate(this, i)); }; // weapons with something in flight (missile, mine)
 
 Host.prototype.contact = function (sh, o) {
-  if (this.over) return;
+  if (this.over || o.projectile) return; // a projectile's damage comes from its own hit() handler
   if (o.kind === 'buoy') {
+    if (sh.dummy) return;
     if (o.n === sh.visited + 1) {
-      sh.visited++; this.leader = Math.max(this.leader, sh.visited); this.events.push({ e: 'buoy', n: o.n, i: sh.i });
-      if (sh.visited === NB) { this.over = true; this.winner = sh.name; this.events.push({ e: 'win', name: sh.name }); }
+      sh.visited++; sh.lastAt = this.time; this.leader = Math.max(this.leader, sh.visited); this.events.push({ e: 'buoy', n: o.n, i: sh.i });
+      if (sh.visited === NB) { this.over = true; this.winner = sh.name; this.events.push({ e: 'win', name: sh.name, res: this.standings() }); }
     }
     return;
   }
+  sh.q = [[0,0],[0,0]]; sh.zc++; // any impact cancels the planned thrusts; the ship keeps the bounce velocity the collision gave it
   if (sh.dead || this.time < sh.inv) return; // a wreck cannot be hurt, and a fresh respawn is briefly invulnerable
   var a = sh.body.GetLinearVelocity(), c = o.body.GetLinearVelocity(), m = o.body.GetMass() || o.mass || 0, dmg = Math.hypot(a.x - c.x, a.y - c.y) * m * 2;
   if (dmg >= 1) this.events.push({ e: 'hit', i: sh.i, d: Math.round(dmg) });
@@ -11027,21 +11138,22 @@ Host.prototype.after = function () {
   for (var n = 0; n < this.ships.length; n++) {
     var sh = this.ships[n];
     if (sh.dying) {
-      sh.dying = false; var p = sh.body.GetPosition(); sh.body.SetActive(false); sh.respawnAt = this.time + 3; sh.q = [[0,0],[0,0],[0,0]];
+      sh.dying = false; var p = sh.body.GetPosition(); sh.body.SetActive(false); sh.respawnAt = this.time + 3; sh.q = [[0,0],[0,0]]; sh.zc++;
       this.events.push({ e: 'boom', i: sh.i, x: p.x * S, y: p.y * S });
     } else if (sh.dead && this.time >= sh.respawnAt && !this.over) this.respawn(sh);
   }
+  if (this.wh.after) this.wh.after(this);
 };
 Host.prototype.respawn = function (sh) {
   var V = this.V, b = sh.visited > 0 ? this.buoys[sh.visited - 1] : null, pos = b ? [b.x, b.y] : sh.start;
-  this.ships.concat(this.rocks).forEach(function (o) { // clear anything sitting on the spawn point
+  this.ships.concat(this.loose).forEach(function (o) { // clear anything sitting on the spawn point
     if (o === sh || o.dead) return;
     var p = o.body.GetPosition(), dx = p.x * S - pos[0], dy = p.y * S - pos[1], d = Math.hypot(dx, dy);
     if (d < 100) { if (d < 1) { dx = 1; dy = 0; d = 1; } o.body.SetPosition(new V((pos[0] + dx / d * 110) / S, (pos[1] + dy / d * 110) / S)); }
   });
   sh.body.SetPositionAndAngle(new V(pos[0] / S, pos[1] / S), sh.body.GetAngle());
   sh.body.SetLinearVelocity(new V(0, 0)); sh.body.SetAngularVelocity(0); sh.body.SetActive(true);
-  sh.hp = HP; sh.dead = false; sh.inv = this.time + 3; sh.q = [[0,0],[0,0],[0,0]];
+  sh.hp = this.shipDef.hp; sh.dead = false; sh.inv = this.time + 3; sh.q = [[0,0],[0,0]]; sh.zc++;
   this.events.push({ e: 'respawn', i: sh.i, x: pos[0], y: pos[1] });
 };
 
@@ -11051,7 +11163,7 @@ Host.prototype.setThrust = function (i, k, x, y) {
   if (!sh || this.over || sh.dead || k !== this.k || !isFinite(x) || !isFinite(y)) return false;
   var len = Math.hypot(x, y), max = this.power(sh);
   if (len > max) { x *= max / len; y *= max / len; }
-  sh.q[2] = [x, y]; return true;
+  sh.q[1] = [x, y]; return true;
 };
 
 // The ship reaches its first thrust point: fire it, lock the next one, open a new 3rd slot.
@@ -11059,15 +11171,15 @@ Host.prototype.tick = function () {
   var V = this.V, self = this;
   this.ships.forEach(function (sh) {
     var t = sh.q.shift(); sh.q.push([0, 0]);
+    var dr = !sh.dead && self.pf.drag ? self.pf.drag(self, sh) : null; // e.g. clouds: { v: velocity factor, t: thrust factor } just before the thrust fires
+    if (dr) { if (dr.v !== 1) { var vv = sh.body.GetLinearVelocity(); sh.body.SetLinearVelocity(new V(vv.x * dr.v, vv.y * dr.v)); } t = [t[0] * dr.t, t[1] * dr.t]; }
     if (sh.dead || !(t[0] || t[1])) return;
     var b = sh.body, m = b.GetMass(); b.SetAngle(Math.atan2(t[1], t[0]));
     b.ApplyImpulse(new V(t[0] / (S * STEP) * m, t[1] / (S * STEP) * m), b.GetWorldCenter());
     self.events.push({ e: 'fire', i: sh.i, x: t[0], y: t[1] });
   });
-  this.rocks.forEach(function (r) { // keep rocks on the track
-    var p = r.body.GetPosition(), dx = W / 2 - p.x * S, dy = H / 2 - p.y * S, d = Math.hypot(dx, dy);
-    if (d > Math.min(W, H) / 2) { var m = r.body.GetMass(); r.body.ApplyImpulse(new V(dx / d * 5 / (S * STEP) * m, dy / d * 5 / (S * STEP) * m), r.body.GetWorldCenter()); }
-  });
+  if (this.pf.tick) this.pf.tick(this);
+  if (this.wh.tick) this.wh.tick(this);
   this.k++;
 };
 
@@ -11075,183 +11187,1023 @@ Host.prototype.step = function (dt) {
   if (this.over) return;
   this.acc += Math.min(dt, 0.25);
   while (this.acc >= FIX) {
-    this.acc -= FIX; this.before(); this.world.Step(FIX, 8, 3); this.world.ClearForces(); this.time += FIX; this.after();
+    this.acc -= FIX; if (this.pf.before) this.pf.before(this); if (this.wh.before) this.wh.before(this); this.world.Step(FIX, 8, 3); this.world.ClearForces(); this.time += FIX; this.after();
     if (this.time >= this.nextTick) { this.tick(); this.nextTick += STEP; }
   }
 };
 
-Host.prototype.init = function (you) {
-  return { t: 'init', you: you, field: this.field, grav: this.grav, W: W, H: H, step: STEP, nb: NB, ship: SHIP,
-    players: this.ships.map(function (s) { return { name: s.name, color: s.color }; }),
+Host.prototype.init = function (you) { // sent once to every player: the static description of the game. pf / w hold what the playfield / weapon add.
+  var d = this.wd || {};
+  return { t: 'init', you: you, field: this.field, W: this.W, H: this.H, weapon: this.weapon, step: STEP, nb: NB, ship: this.shipDef.shape,
+    players: this.ships.map(function (s) { return { name: s.name, color: s.color, dummy: !!s.dummy }; }), targeted: !!d.targeted, wrange: d.range || null,
     buoys: this.buoys.map(function (b) { return [b.n, b.x, b.y]; }),
-    rocks: this.rocks.map(function (r) { return r.pts; }) };
+    pf: this.pf.init ? this.pf.init(this) : {}, w: this.wh.init ? this.wh.init(this) : {} };
 };
 
-Host.prototype.snapshot = function () {
+Host.prototype.snapshot = function () { // 20 times a second to every player. pf / w hold what the playfield / weapon add.
   var r1 = function (v) { return Math.round(v * 10) / 10; }, r3 = function (v) { return Math.round(v * 1000) / 1000; }, ev = this.events; this.events = [];
-  return { t: 'snap', k: this.k, ht: this.time, moons: this.moons.map(function (m) { var p = m.body.GetPosition(); return [r1(p.x * S), r1(p.y * S)]; }), tin: Math.round((this.nextTick - this.time) * 1000), ev: ev,
+  return { t: 'snap', k: this.k, ht: this.time, tin: Math.round((this.nextTick - this.time) * 1000), ev: ev,
     ships: this.ships.map(function (s) {
       var p = s.body.GetPosition(), v = s.body.GetLinearVelocity();
       return { x: r1(p.x * S), y: r1(p.y * S), a: s.body.GetAngle(), vx: r3(v.x * S), vy: r3(v.y * S),
-               hp: Math.round(s.hp), n: s.visited, dead: s.dead, inv: this.time < s.inv, rs: s.dead ? Math.max(0, s.respawnAt - this.time) : 0, q: s.q.map(function (a) { return a.slice(); }) }; }, this),
+               hp: Math.round(s.hp), n: s.visited, dead: s.dead, inv: this.time < s.inv, zc: s.zc, cd: Math.max(0, (s.readyAt || 0) - this.time), rs: s.dead ? Math.max(0, s.respawnAt - this.time) : 0, q: s.q.map(function (a) { return a.slice(); }) }; }, this),
     pw: this.ships.map(this.power, this),
-    rocks: this.rocks.map(function (r) { var p = r.body.GetPosition(); return [r1(p.x * S), r1(p.y * S), r.body.GetAngle()]; }) };
+    pf: this.pf.snapshot ? this.pf.snapshot(this) : {}, w: this.wh.snapshot ? this.wh.snapshot(this) : {} };
 };
 
-root.VodHost = Host;
+VOD.Host = Host;
 if (typeof module !== 'undefined') module.exports = Host;
-})(typeof window !== 'undefined' ? window : globalThis);
+})();
 </script>
-<style>
- html,body{margin:0;height:100%;overflow:hidden;background:radial-gradient(ellipse at center,#0b0b1a,#000);color:#fff;font-family:Optima,Helvetica,sans-serif;touch-action:none}
- canvas{position:fixed;inset:0;width:100%;height:100%}
- #hud{position:absolute;top:8px;left:10px;font-size:15px;line-height:1.5;pointer-events:none;text-shadow:0 0 4px #000}
- #lobby{position:absolute;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center}
- #box{width:340px;text-align:center}
- input,button,select{font:inherit;padding:8px 12px;margin:4px;border-radius:6px;border:1px solid #e6b3b3;background:rgba(230,179,179,.1);color:#e6b3b3}
- button{cursor:pointer} input{width:150px;text-align:center}
- #msg{margin-top:10px;min-height:3em;color:#ccc}
- #banner{position:absolute;top:40%;width:100%;text-align:center;font-size:42px;display:none;text-shadow:0 0 12px #000}
-</style>
-</head>
-<body>
-<canvas id="c"></canvas>
-<div id="hud"></div>
-<div id="banner"></div>
-<div id="vb" style="position:absolute;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;gap:4px"><button id="bfit">Fit</button><button id="brt">Route</button><button id="bbuoy">Buoy</button><button id="bin">+</button><button id="bout">−</button></div>
-<div id="err" style="position:absolute;bottom:0;left:0;right:0;background:#400;color:#fcc;font:12px monospace;padding:4px;display:none;white-space:pre-wrap"></div>
-<div id="lobby"><div id="box">
- <h2>Vector of Death - real time</h2>
- <input id="name" placeholder="Your name" maxlength="14"><br>
- <label style="font-size:14px"><input type="checkbox" id="canhost" style="width:auto"> I can host (laptop or desktop, tab stays open)</label><br>
- <select id="field"><option value="classic">Playfield: classic rocks</option><option value="planet">Playfield: planet and moons</option></select><br>
- <button id="create">Host a game</button> <button id="solo">Practice solo</button><br>
- <input id="code" placeholder="Game code"><button id="join">Join</button><br>
- <button id="start" style="display:none">Start game</button>
- <div id="msg"></div>
-</div></div>
-<script>
-addEventListener('error', e => { const d = document.getElementById('err'); d.style.display = 'block'; d.textContent += (e.message || 'error') + ' ' + (e.filename || '').split('/').pop() + ':' + (e.lineno || '') + '\n'; });
+<script>// The standard ship. Add another file here (VOD.ship('name', {...})) for a different hull; the host picks one with opts.ship (default 'standard').
+VOD.ship('standard', {
+  label: 'Standard',
+  shape: [[0,12],[6,6],[6,0],[12,6],[30,6],[36,12],[36,18],[30,24],[12,24],[6,30],[6,24],[0,18]], // outline in px, nose to the right, 36 x 30
+  hp: 100,     // hull points
+  power: 100   // maximum thrust per tick, in px of velocity change over the tick
+});
+</script>
+<script>// Playfield "Caves": a start cavern on the left, then a seeded maze with several entrances and loops (route choices), drawn as organic rock walls.
+// Tuning (development): add ?corridor=240&loops=30&rough=80&tilt=80&seed=7 to the page address.
+(function () {
+var K = VOD.K, S = K.S, NB = K.NB, W = K.W, H = K.H, WALL_MASS = 2; // a wall hit hurts like hitting something this heavy (a rock is about 3)
+
+// Cave walls: the maze's straight wall boxes are only a skeleton. Rasterise them, blur (rounds corners and ends), add smooth noise (the jitter), and trace the
+// 0.5 contour with marching squares. Returns closed loops as flat [x0, y0, x1, y1, ...] integer arrays. amp < 0.5 keeps walls solid and corridors open.
+function simplify(p, tol) { // Douglas-Peucker on an open polyline
+  if (p.length < 3) return p;
+  var keep = new Uint8Array(p.length), st = [[0, p.length - 1]]; keep[0] = keep[p.length - 1] = 1;
+  while (st.length) {
+    var s = st.pop(), a = p[s[0]], b = p[s[1]], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1, md = -1, mi = -1;
+    for (var q = s[0] + 1; q < s[1]; q++) {
+      var tt = Math.max(0, Math.min(1, ((p[q][0] - a[0]) * dx + (p[q][1] - a[1]) * dy) / L2)), ex = a[0] + tt * dx - p[q][0], ey = a[1] + tt * dy - p[q][1], d = ex * ex + ey * ey;
+      if (d > md) { md = d; mi = q; }
+    }
+    if (md > tol * tol) { keep[mi] = 1; st.push([s[0], mi], [mi, s[1]]); }
+  }
+  return p.filter(function (_, q) { return keep[q]; });
+}
+function caveContours(rects, W, H, t, amp, rng, warp) {
+  var g = 6, pad = 6, nx = Math.ceil(W / g) + 1 + 2 * pad, ny = Math.ceil(H / g) + 1 + 2 * pad, i, j, solid0 = new Uint8Array(nx * ny), solid = new Uint8Array(nx * ny);
+  for (j = 0; j < ny; j++) for (i = 0; i < nx; i++) { var px = (i - pad) * g, py = (j - pad) * g; if (px < 0 || py < 0 || px > W || py > H) solid0[j * nx + i] = 1; } // outside the field is rock
+  rects.forEach(function (r) {
+    var i0 = Math.max(0, Math.ceil((r[0] - r[2] / 2) / g) + pad), i1 = Math.min(nx - 1, Math.floor((r[0] + r[2] / 2) / g) + pad), j0 = Math.max(0, Math.ceil((r[1] - r[3] / 2) / g) + pad), j1 = Math.min(ny - 1, Math.floor((r[1] + r[3] / 2) / g) + pad);
+    for (var b = j0; b <= j1; b++) for (var a = i0; a <= i1; a++) solid0[b * nx + a] = 1;
+  });
+  var mkNoise = function (sz) { // smooth value noise in [-1, 1] with features about sz px wide
+    var cw = Math.ceil(W / sz) + 3, ch = Math.ceil(H / sz) + 3, a = []; for (var q = 0; q < cw * ch; q++) a.push(rng() * 2 - 1);
+    return function (x, y) {
+      var fx = x / sz + 1, fy = y / sz + 1, ix = Math.floor(fx), iy = Math.floor(fy), ux = fx - ix, uy = fy - iy; ux = ux * ux * (3 - 2 * ux); uy = uy * uy * (3 - 2 * uy);
+      return a[iy * cw + ix] * (1 - ux) * (1 - uy) + a[iy * cw + ix + 1] * ux * (1 - uy) + a[(iy + 1) * cw + ix] * (1 - ux) * uy + a[(iy + 1) * cw + ix + 1] * ux * uy;
+    };
+  };
+  var wx = warp ? mkNoise(360) : null, wy = warp ? mkNoise(360) : null; // a smooth displacement field: it leans and bends the straight walls without breaking a single connection
+  for (j = 0; j < ny; j++) for (i = 0; i < nx; i++) {
+    var qx = (i - pad) * g, qy = (j - pad) * g, si = Math.round((warp ? qx + warp * wx(qx, qy) : qx) / g) + pad, sj = Math.round((warp ? qy + warp * wy(qx, qy) : qy) / g) + pad;
+    solid[j * nx + i] = si < 0 || sj < 0 || si >= nx || sj >= ny ? 1 : solid0[sj * nx + si];
+  }
+  var rw = Math.max(1, Math.floor(t / 2 / g)), S2 = nx + 1, I = new Int32Array(S2 * (ny + 1)), F = new Float32Array(nx * ny);
+  for (j = 0; j < ny; j++) { var row = 0; for (i = 0; i < nx; i++) { row += solid[j * nx + i]; I[(j + 1) * S2 + i + 1] = I[j * S2 + i + 1] + row; } }
+  var n1 = mkNoise(150), n2 = mkNoise(60), noise = function (x, y) { return .65 * n1(x, y) + .35 * n2(x, y); }; // the wobble along the walls
+  for (j = 0; j < ny; j++) for (i = 0; i < nx; i++) {
+    var a0 = Math.max(0, i - rw), a1 = Math.min(nx - 1, i + rw), b0 = Math.max(0, j - rw), b1 = Math.min(ny - 1, j + rw);
+    var sum = I[(b1 + 1) * S2 + a1 + 1] - I[b0 * S2 + a1 + 1] - I[(b1 + 1) * S2 + a0] + I[b0 * S2 + a0];
+    F[j * nx + i] = sum / ((a1 - a0 + 1) * (b1 - b0 + 1)) + (amp ? amp * noise((i - pad) * g, (j - pad) * g) : 0);
+  }
+  var segs = [], at = {};
+  var ep = function (e) { // crossing point on a cell edge: 'h' joins node (i,j)-(i+1,j), 'v' joins (i,j)-(i,j+1)
+    var i2 = e[0] === 'h' ? e[1] + 1 : e[1], j2 = e[0] === 'h' ? e[2] : e[2] + 1, f1 = F[e[2] * nx + e[1]], f2 = F[j2 * nx + i2], tt = (.5 - f1) / (f2 - f1);
+    return [(e[1] - pad + tt * (i2 - e[1])) * g, (e[2] - pad + tt * (j2 - e[2])) * g];
+  };
+  var key = function (e) { return e[0] + e[1] + ',' + e[2]; };
+  var S = function (e1, e2) { var id = segs.length; segs.push([key(e1), key(e2), ep(e1), ep(e2)]); (at[key(e1)] = at[key(e1)] || []).push(id); (at[key(e2)] = at[key(e2)] || []).push(id); };
+  for (j = 0; j < ny - 1; j++) for (i = 0; i < nx - 1; i++) {
+    var va = F[j * nx + i] > .5, vb = F[j * nx + i + 1] > .5, vc = F[(j + 1) * nx + i + 1] > .5, vd = F[(j + 1) * nx + i] > .5, idx = (va ? 1 : 0) | (vb ? 2 : 0) | (vc ? 4 : 0) | (vd ? 8 : 0);
+    if (idx === 0 || idx === 15) continue;
+    var T = ['h', i, j], B = ['h', i, j + 1], L = ['v', i, j], R = ['v', i + 1, j];
+    switch (idx) {
+      case 1: case 14: S(L, T); break; case 2: case 13: S(T, R); break; case 3: case 12: S(L, R); break;
+      case 4: case 11: S(R, B); break; case 6: case 9: S(T, B); break; case 7: case 8: S(L, B); break;
+      case 5: case 10: var ctr = (F[j * nx + i] + F[j * nx + i + 1] + F[(j + 1) * nx + i + 1] + F[(j + 1) * nx + i]) / 4 > .5;
+        if ((idx === 5) === ctr) { S(T, R); S(L, B); } else { S(L, T); S(R, B); }
+    }
+  }
+  var used = new Uint8Array(segs.length), loops = [];
+  for (var s0 = 0; s0 < segs.length; s0++) {
+    if (used[s0]) continue;
+    var pts = [], cur = s0, k = segs[s0][0];
+    while (cur !== null && !used[cur]) {
+      used[cur] = 1; var sg = segs[cur], from = sg[0] === k ? 0 : 1; pts.push(from === 0 ? sg[2] : sg[3]); k = from === 0 ? sg[1] : sg[0];
+      var nx2 = (at[k] || []).filter(function (id) { return !used[id]; }); cur = nx2.length ? nx2[0] : null;
+    }
+    pts.push(pts[0]); var sp = simplify(pts, 1.2); sp.pop();
+    var per = 0; for (var q = 0; q < sp.length; q++) { var nq = sp[(q + 1) % sp.length]; per += Math.hypot(nq[0] - sp[q][0], nq[1] - sp[q][1]); }
+    if (sp.length >= 3 && per > 80) loops.push([].concat.apply([], sp.map(function (p) { return [Math.round(p[0]), Math.round(p[1])]; })));
+  }
+  return loops;
+}
+
+// "Caves" playfield: a start cavern on the left, then a maze with several entrances. Corridor width = opts.corridor (px). A spanning tree guarantees every cell
+// is reachable; opts.loops (0..1) then knocks out that share of the remaining walls, so there are alternative routes rather than one hard solution.
+function build(host, names, opts) { // note: h and v below are the maze wall arrays
+  var self = host, V = host.V, b2 = host.b2, i, j, k;
+  var seed = opts.seed != null && opts.seed !== '' && isFinite(+opts.seed) ? +opts.seed : Math.floor(Math.random() * 1e9), rng = VOD.u.mulberry(seed);
+  var rint = function (n) { return Math.floor(rng() * n); }, shuffle = function (a) { for (var q = a.length - 1; q > 0; q--) { var r = rint(q + 1), t = a[q]; a[q] = a[r]; a[r] = t; } return a; };
+  var c = Math.max(120, Math.min(480, +opts.corridor || 240)), loops = Math.max(0, Math.min(1, opts.loops != null && isFinite(+opts.loops) ? +opts.loops : .2));
+  var t = Math.round(Math.max(40, Math.min(70, c * .25))), P = c + t, SW = 700; // t: wall thickness, P: grid pitch, SW: width of the start cavern
+  var N = Math.max(4, Math.floor(2700 / P)), M = Math.max(3, Math.floor(1500 / P)), x0 = SW, y0 = t / 2;
+  host.W = SW + N * P + t / 2; host.H = M * P + t; host.pfs.seed = seed;
+  var v = [], h = []; // v[i][j]: wall on vertical line i beside row j; h[i][j]: wall on horizontal line j under column i
+  for (i = 0; i <= N; i++) { v[i] = []; for (j = 0; j < M; j++) v[i][j] = true; }
+  for (i = 0; i < N; i++) { h[i] = []; for (j = 0; j <= M; j++) h[i][j] = true; }
+  var par = []; for (k = 0; k < N * M; k++) par[k] = k;
+  var find = function (a) { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; }, edges = [], left = [];
+  for (i = 1; i < N; i++) for (j = 0; j < M; j++) edges.push([0, i, j, i - 1 + j * N, i + j * N]);
+  for (i = 0; i < N; i++) for (j = 1; j < M; j++) edges.push([1, i, j, i + (j - 1) * N, i + j * N]);
+  shuffle(edges).forEach(function (e) {
+    var a = find(e[3]), b = find(e[4]);
+    if (a !== b) { par[a] = b; (e[0] ? h : v)[e[1]][e[2]] = false; } else left.push(e);
+  });
+  left.forEach(function (e) { if (rng() < loops) (e[0] ? h : v)[e[1]][e[2]] = false; }); // the extra openings: route choices
+  var rows = []; for (j = 0; j < M; j++) rows.push(j);
+  var entrances = shuffle(rows).slice(0, Math.min(M, Math.max(3, Math.round(M * .6), names.length))); entrances.forEach(function (r) { v[0][r] = false; });
+  var open = function (u) { var ui = u % N, uj = Math.floor(u / N), o = []; // cells you can walk to from cell u
+    if (ui > 0 && !v[ui][uj]) o.push(u - 1); if (ui < N - 1 && !v[ui + 1][uj]) o.push(u + 1); if (uj > 0 && !h[ui][uj]) o.push(u - N); if (uj < M - 1 && !h[ui][uj + 1]) o.push(u + N); return o; };
+  var bfs = function (src) { var d = [], q = src.slice(); for (var z = 0; z < N * M; z++) d[z] = -1; src.forEach(function (s0) { d[s0] = 0; });
+    while (q.length) { var u = q.shift(); open(u).forEach(function (w) { if (d[w] < 0) { d[w] = d[u] + 1; q.push(w); } }); } return d; };
+  var dEnt = bfs(entrances.map(function (r) { return r * N; })), chosen = []; // buoy 1 a few cells in from the entrances, the next ones a good walk from the previous buoy and not near earlier ones
+  for (var bn = 0; bn < NB; bn++) {
+    var dPrev = bn ? bfs([chosen[bn - 1]]) : dEnt, lo = bn ? 4 : 3, hi = bn ? 9 : 6, cand = [];
+    for (var att = 0; att < 7 && !cand.length; att++) for (var u = 0; u < N * M; u++) {
+      if (chosen.indexOf(u) >= 0 || dPrev[u] < lo - att || dPrev[u] > hi + att * 2) continue;
+      if (chosen.every(function (o) { return Math.hypot(o % N - u % N, Math.floor(o / N) - Math.floor(u / N)) >= 3 - Math.floor(att / 3); })) cand.push(u);
+    }
+    if (!cand.length) for (var u2 = 0; u2 < N * M; u2++) if (chosen.indexOf(u2) < 0) cand.push(u2);
+    chosen.push(cand[rint(cand.length)]);
+  }
+  chosen.forEach(function (u, n) {
+    var bx = x0 + (u % N + .5) * P, by = y0 + (Math.floor(u / N) + .5) * P;
+    host.addBuoy(n + 1, bx, by);
+  });
+  var rects = []; // [centre x, centre y, width, height] in px
+  for (i = 0; i <= N; i++) for (j = 0; j < M; j++) if (v[i][j]) rects.push([x0 + i * P, y0 + j * P + P / 2, t, P + t]);
+  for (i = 0; i < N; i++) for (j = 0; j <= M; j++) if (h[i][j]) rects.push([x0 + i * P + P / 2, y0 + j * P, P + t, t]);
+  rects.push([x0 / 2, y0, x0, t], [x0 / 2, y0 + M * P, x0, t], [t / 2, host.H / 2, t, host.H]); // roof, floor and back wall of the start cavern
+  var rough = Math.max(0, Math.min(100, opts.rough != null && isFinite(+opts.rough) ? +opts.rough : 80)) / 100;
+  var tilt = Math.max(0, Math.min(100, opts.tilt != null && isFinite(+opts.tilt) ? +opts.tilt : 80)) / 100; // how far walls may lean from vertical and horizontal
+  var cave = caveContours(rects, host.W, host.H, t, .38 * rough, rng, Math.min(60, c * .25) * tilt); // organic outlines; rough = 0 gives smooth rounded walls, 100 the most jitter
+  var wall = { kind: 'wall', mass: WALL_MASS }, bd = new b2.Dynamics.b2BodyDef(); bd.type = b2.Dynamics.b2Body.b2_staticBody; bd.userData = wall;
+  wall.body = host.world.CreateBody(bd);
+  cave.forEach(function (lp) { // every outline segment is an edge shape
+    for (var q = 0; q < lp.length; q += 2) {
+      var nq = (q + 2) % lp.length, x1 = lp[q], y1 = lp[q + 1], x2 = lp[nq], y2 = lp[nq + 1]; if (Math.hypot(x2 - x1, y2 - y1) < .5) continue;
+      var fd = new b2.Dynamics.b2FixtureDef(); fd.shape = new b2.Collision.Shapes.b2PolygonShape(); fd.shape.SetAsEdge(new V(x1 / S, y1 / S), new V(x2 / S, y2 / S));
+      fd.friction = .2; fd.restitution = .5; wall.body.CreateFixture(fd);
+    }
+  });
+  host.pfs.walls = cave;
+  // ships line up in front of the entrances and head straight through them, so nobody starts aimed at a wall
+  var segs = []; cave.forEach(function (lp) { for (var q = 0; q < lp.length; q += 2) { var nq = (q + 2) % lp.length; segs.push([lp[q], lp[q + 1], lp[nq], lp[nq + 1]]); } });
+  var wallDist = function (x, y) { var best = 1e9; segs.forEach(function (sg) { var dx = sg[2] - sg[0], dy = sg[3] - sg[1], tt = Math.max(0, Math.min(1, ((x - sg[0]) * dx + (y - sg[1]) * dy) / (dx * dx + dy * dy || 1))); best = Math.min(best, Math.hypot(sg[0] + tt * dx - x, sg[1] + tt * dy - y)); }); return best; };
+  var clearAlong = function (yy) { var m = 1e9; for (var xx = 260; xx <= x0 + 120; xx += 40) m = Math.min(m, wallDist(xx, yy)); return m; }; // clearance along the whole straight run into the entrance
+  var bestY = function (r) { // the widest-open height of entrance row r, so the walls' jitter and tilt cannot put a wall edge in the way
+    var cy = y0 + (r + .5) * P, best = cy, bc = -1;
+    for (var yy = cy - P / 2 + 20; yy <= cy + P / 2 - 20; yy += 6) { var cl = clearAlong(yy); if (cl > bc + 1 || (Math.abs(cl - bc) <= 1 && Math.abs(yy - cy) < Math.abs(best - cy))) { bc = cl; best = yy; } }
+    return best;
+  };
+  var ent = shuffle(entrances.slice()), placed = [];
+  var slot = function (r) { // a free spot in front of entrance r: clear of walls and at least 62 px from the ships placed before it
+    var base = bestY(r), offs = [0, 70, -70, 140, -140, 210, -210], pick = null;
+    for (var pass = 0; pass < 2 && pick === null; pass++) for (var q = 0; q < offs.length && pick === null; q++) {
+      var yy = base + offs[q];
+      if (pass === 0 && clearAlong(yy) < 34) continue;
+      if (placed.every(function (p) { return Math.abs(p - yy) >= 62; })) pick = yy;
+    }
+    placed.push(pick === null ? base : pick); return placed[placed.length - 1];
+  };
+  names.forEach(function (name, q) {
+    var sh = self.addShip(q, name, [260, slot(ent[q % ent.length])], [100, 0]);
+    sh.body.GetFixtureList().SetRestitution(.5); // bounce less off walls
+  });
+}
+
+let wallIdx = null;
+function nearWall(G, x, y, R) { // is (x, y) within R px (R <= 24) of a cave wall? uses a grid of outline segments, built on first use
+  if (!wallIdx || wallIdx.src !== G.pf.walls) {
+    const C = 48, grid = {}, segs = [];
+    G.pf.walls.forEach(lp => { for (let q = 0; q < lp.length; q += 2) { const n = (q + 2) % lp.length, sg = [lp[q], lp[q + 1], lp[n], lp[n + 1]], id = segs.push(sg) - 1;
+      for (let cx = Math.floor((Math.min(sg[0], sg[2]) - 24) / C); cx <= Math.floor((Math.max(sg[0], sg[2]) + 24) / C); cx++) for (let cy = Math.floor((Math.min(sg[1], sg[3]) - 24) / C); cy <= Math.floor((Math.max(sg[1], sg[3]) + 24) / C); cy++) (grid[cx + ',' + cy] = grid[cx + ',' + cy] || []).push(id); } });
+    wallIdx = { src: G.pf.walls, C, grid, segs };
+  }
+  const l = wallIdx.grid[Math.floor(x / wallIdx.C) + ',' + Math.floor(y / wallIdx.C)]; if (!l) return false;
+  return l.some(id => { const sg = wallIdx.segs[id], dx = sg[2] - sg[0], dy = sg[3] - sg[1], t = Math.max(0, Math.min(1, ((x - sg[0]) * dx + (y - sg[1]) * dy) / (dx * dx + dy * dy || 1))), ex = sg[0] + t * dx - x, ey = sg[1] + t * dy - y; return ex * ex + ey * ey < R * R; });
+}
+
+VOD.playfield('caves', {
+  label: 'Caves', order: 30,
+  host: {
+    build: build,
+    init: function (h) { return { walls: h.pfs.walls, seed: h.pfs.seed }; }
+  },
+  client: {
+    blocked: nearWall, // is (x, y) within R px of a wall? the route preview shows a red circle where the plan hits one
+    hud: function (G) { return '<br><small>maze seed ' + G.pf.seed + '</small>'; },
+    opts: function (q, fresh) { // development parameters from the page address
+      const num = k => q.get(k) === null || q.get(k) === '' ? undefined : +q.get(k);
+      return { corridor: num('corridor'), loops: num('loops') === undefined ? undefined : Math.max(0, Math.min(100, num('loops'))) / 100, rough: num('rough'), tilt: num('tilt'), seed: fresh ? null : q.get('seed') };
+    },
+    draw: function (G, I) {
+  if (G.pf.walls) { // cave walls: everything outside the free-space outlines is rock (even-odd fill), with a glowing edge
+    const trace = () => { ctx.beginPath(); G.pf.walls.forEach(lp => { for (let q = 0; q < lp.length; q += 2) q ? ctx.lineTo(lp[q], lp[q + 1]) : ctx.moveTo(lp[q], lp[q + 1]); ctx.closePath(); }); };
+    ctx.save(); ctx.lineJoin = 'round'; trace(); ctx.strokeStyle = '#cfe'; ctx.lineWidth = 8; ctx.shadowColor = '#8ab'; ctx.shadowBlur = 25; ctx.stroke(); ctx.shadowBlur = 0;
+    ctx.rect(-400, -400, G.W + 800, G.H + 800); ctx.fillStyle = '#05060c'; ctx.fill('evenodd');
+    trace(); ctx.strokeStyle = '#e8f4ff'; ctx.lineWidth = 2; ctx.stroke(); ctx.restore(); }
+    }
+  }
+});
+})();
+</script>
+<script>// Playfield "Rocks" (classic): 10 drifting rocks, buoy 1 in the middle, the other buoys on random free cells. VOD.playfield(id, def) - see src/README.md.
+(function () {
+var K = VOD.K, S = K.S, W = K.W, H = K.H, NB = K.NB, STEP = K.STEP, rnd = VOD.u.rnd, pick = VOD.u.pick, hull = VOD.u.hull, NR = 10;
+
+VOD.playfield('classic', {
+  label: 'Rocks', order: 10,
+  host: {
+    build: function (h, names) { // create obstacles and buoys, then place the ships (h.cornerStarts / freeCells / addBuoy / placeShips are in core/host.js)
+      var V = h.V, bu1 = [W / 2, H / 2], corner = pick([[0,0],[W,0],[0,H],[W,H]]), starts = h.cornerStarts(corner, bu1, names.length), cells = h.freeCells(starts), i;
+      h.pfs.rocks = [];
+      for (i = 0; i < NR; i++) { // rocks: 8 random vertices, so the convex hull stays within Box2D's 8 vertex limit
+        var p = pick(cells), size = rnd(50, 80), pts = [];
+        for (var a = 0; a < 8; a++) { var l = rnd(size * .375, size * .5), an = a * Math.PI / 4; pts.push([Math.cos(an) * l, Math.sin(an) * l]); }
+        var r = { kind: 'rock' }; r.pts = hull(pts);
+        r.body = h.body(r, p[0], p[1], r.pts, 0);
+        r.body.SetLinearVelocity(new V(rnd(0, 25) / S, rnd(0, 25) / S)); r.body.SetAngularVelocity(rnd(0, 90) * Math.PI / 180);
+        h.pfs.rocks.push(r); h.loose.push(r);
+      }
+      h.addBuoy(1, bu1[0], bu1[1]);
+      for (i = 2; i <= NB; i++) { var q = pick(cells); h.addBuoy(i, q[0], q[1]); }
+      h.placeShips(names, starts, bu1);
+    },
+    tick: function (h) { // keep rocks on the track
+      var V = h.V;
+      h.pfs.rocks.forEach(function (r) {
+        var p = r.body.GetPosition(), dx = W / 2 - p.x * S, dy = H / 2 - p.y * S, d = Math.hypot(dx, dy);
+        if (d > Math.min(W, H) / 2) { var m = r.body.GetMass(); r.body.ApplyImpulse(new V(dx / d * 5 / (S * STEP) * m, dy / d * 5 / (S * STEP) * m), r.body.GetWorldCenter()); }
+      });
+    },
+    init: function (h) { return { rocks: h.pfs.rocks.map(function (r) { return r.pts; }) }; },
+    snapshot: function (h) { return { rocks: h.pfs.rocks.map(function (r) { var p = r.body.GetPosition(), r1 = function (v) { return Math.round(v * 10) / 10; }; return [r1(p.x * S), r1(p.y * S), r.body.GetAngle()]; }) }; }
+  },
+  client: { // runs in every player's browser; uses the page globals ctx, sc, circle, smooth, poly (src/client/render.js)
+    interp: function (a, b, L, ang) { return { rocks: a.rocks.map(function (r, i) { return [L(r[0], b.rocks[i][0]), L(r[1], b.rocks[i][1]), ang(r[2], b.rocks[i][2])]; }) }; },
+    draw: function (G, I) { // background layer: below buoys and ships
+  G.pf.rocks.forEach((pts, i) => { const r = I.pf.rocks[i]; ctx.save(); ctx.translate(r[0], r[1]); ctx.rotate(r[2]); smooth(pts);
+    ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.shadowColor = 'darkgrey'; ctx.shadowBlur = 20; ctx.fill(); ctx.stroke(); ctx.restore(); });
+    }
+  }
+});
+})();
+</script>
+<script>// Playfield "Clouds": drifting, overlapping circular clouds cover about half of the field. A ship inside a cloud when a thrust fires (every 3 s) first loses 50% of its velocity, and the thrust itself is cut by 50% too.
+// Overlaps do not stack. Cloud positions are a pure function of the host's clock (straight drift, bouncing off the edges of the field), so the client can predict them for the route preview.
+(function () {
+var K = VOD.K, W = K.W, H = K.H, NB = K.NB, rnd = VOD.u.rnd, pick = VOD.u.pick, KEEP = .5, SLOW = { v: KEEP, t: KEEP }, ONE = { v: 1, t: 1 }, COVER = .5, RMIN = 120, RMAX = 260;
+var bounce = function (v, L) { var m = (v % (2 * L) + 2 * L) % (2 * L); return m <= L ? m : 2 * L - m; }; // a straight run that reflects off 0 and L
+var at = function (c, t) { return [bounce(c.x + c.vx * t, W), bounce(c.y + c.vy * t, H)]; }; // where cloud c (its centre) is at host time t: it bounces off the edges of the field
+var inside = function (clouds, x, y, t) { return clouds.some(function (c) { var p = at(c, t); return Math.hypot(p[0] - x, p[1] - y) < c.r; }); };
+// Clouds are added until the average cover over the first
+// 10 minutes reaches 50%, and a layout is only accepted if the cover stays between 40% and 65% in that time (the best of 80 tries otherwise).
+var GRID = 60, GX = Math.floor(W / GRID), GY = Math.floor(H / GRID), TS = [], i0;
+for (i0 = 0; i0 <= 600; i0 += 30) TS.push(i0);
+var makeClouds = function () {
+  var best = null;
+  for (var attempt = 0; attempt < 80; attempt++) {
+    var clouds = [], seen = TS.map(function () { return new Uint8Array(GX * GY); }), count = TS.map(function () { return 0; }), mean = 0, mn = 0, mx = 0;
+    while (clouds.length < 60 && mean < COVER) {
+      var an = rnd(0, 2 * Math.PI), sp = rnd(12, 28), c = { x: rnd(0, W), y: rnd(0, H), vx: Math.cos(an) * sp, vy: Math.sin(an) * sp, r: rnd(RMIN, RMAX) }; clouds.push(c);
+      TS.forEach(function (t, k) { // mark the sample points this cloud covers at time t
+        var p = at(c, t);
+        for (var gx = Math.max(0, Math.floor((p[0] - c.r) / GRID)); gx <= Math.min(GX - 1, Math.floor((p[0] + c.r) / GRID)); gx++) for (var gy = Math.max(0, Math.floor((p[1] - c.r) / GRID)); gy <= Math.min(GY - 1, Math.floor((p[1] + c.r) / GRID)); gy++) {
+          var idx = gx * GY + gy; if (!seen[k][idx] && Math.hypot(p[0] - (gx + .5) * GRID, p[1] - (gy + .5) * GRID) < c.r) { seen[k][idx] = 1; count[k]++; }
+        }
+      });
+      var fr = count.map(function (n) { return n / (GX * GY); }); mean = fr.reduce(function (a, b) { return a + b; }, 0) / fr.length; mn = Math.min.apply(null, fr); mx = Math.max.apply(null, fr);
+    }
+    var bad = Math.max(0, .4 - mn) + Math.max(0, mx - .65); if (!best || bad < best.bad) best = { clouds: clouds, bad: bad };
+    if (bad === 0) break;
+  }
+  return best.clouds;
+};
+
+VOD.playfield('clouds', {
+  label: 'Clouds', order: 28,
+  host: {
+    build: function (h, names) {
+      var bu1 = [W / 2, H / 2], corner = pick([[0,0],[W,0],[0,H],[W,H]]), starts = h.cornerStarts(corner, bu1, names.length), cells = h.freeCells(starts), clouds = makeClouds(), i;
+      h.pfs.clouds = clouds;
+      h.addBuoy(1, bu1[0], bu1[1]); for (i = 2; i <= NB; i++) { var q = pick(cells); h.addBuoy(i, q[0], q[1]); }
+      h.placeShips(names, starts, bu1);
+    },
+    drag: function (h, sh) { var p = sh.body.GetPosition(); return inside(h.pfs.clouds, p.x * K.S, p.y * K.S, h.time) ? SLOW : ONE; }, // velocity and thrust factors applied just before each thrust fires
+    init: function (h) { return { clouds: h.pfs.clouds }; }
+  },
+  client: {
+    damp: function (G, x, y, T) { return inside(G.pf.clouds, x, y, T) ? SLOW : ONE; }, // the same factor, for the route preview
+    draw: function (G, I) {
+      G.pf.clouds.forEach(c => {
+        const p = at(c, I.th), x = p[0], y = p[1], g = ctx.createRadialGradient(x, y, 0, x, y, c.r);
+        g.addColorStop(0, 'rgba(160,185,225,.26)'); g.addColorStop(.8, 'rgba(160,185,225,.26)'); g.addColorStop(1, 'rgba(160,185,225,0)');
+        ctx.fillStyle = g; circle(x, y, c.r); ctx.fill();
+      });
+    }
+  }
+});
+})();
+</script>
+<script>// Playfield "Planet": a planet in the middle with three moons on orbits; gravity (k / distance^2) bends every trajectory. Buoys lie on alternate sides of the planet.
+(function () {
+var K = VOD.K, S = K.S, W = K.W, H = K.H, NB = K.NB, FIX = K.FIX, pick = VOD.u.pick;
+var PLANET = { rad: 90, k: 600000, mass: 8, soft: 8 }; // gravity = k / distance^2: about 10 px/s^2 at 250 px, i.e. a step's drift moves ~45 px
+var MOON_K = PLANET.k / 9; // a moon pulls 1/9 as hard as the planet, so the two cancel 3/4 of the way from the planet to the moon (0.75^2 : 0.25^2 = 9 : 1)
+var MOONS = [{ r: 250, rad: 26, k: MOON_K, w: .15, mass: 4 }, { r: 380, rad: 20, k: MOON_K, w: -.1, mass: 3 }, { r: 520, rad: 32, k: MOON_K, w: .07, mass: 5 }];
+var orbit = function (h, m, t) { var a = m.a0 + m.w * t, c = h.pfs.grav.c; return [c[0] + m.r * Math.cos(a), c[1] + m.r * Math.sin(a)]; };
+
+VOD.playfield('planet', {
+  label: 'Planet', order: 20,
+  host: {
+    build: function (h, names) {
+      var ctr = [W / 2, H / 2], corner = pick([[0,0],[W,0],[0,H],[W,H]]), n = names.length, i;
+      var grav = h.pfs.grav = { c: ctr, soft: PLANET.soft, planet: { rad: PLANET.rad, k: PLANET.k }, moons: [] }; h.pfs.moons = [];
+      var planet = { kind: 'planet', mass: PLANET.mass }; planet.body = h.body(planet, ctr[0], ctr[1], null, PLANET.rad, 'static');
+      MOONS.forEach(function (m) {
+        var o = { kind: 'moon', mass: m.mass, r: m.r, w: m.w, a0: Math.random() * 2 * Math.PI }, p = orbit(h, o, 0);
+        o.body = h.body(o, p[0], p[1], null, m.rad, 'kinematic'); h.pfs.moons.push(o); grav.moons.push({ r: m.r, w: m.w, a0: o.a0, rad: m.rad, k: m.k });
+      });
+      // buoy 1 sits a quarter turn around the planet from the start corner, so the straight line from the start misses the planet
+      var dd = [corner[0] - ctr[0], corner[1] - ctr[1]], ll = Math.hypot(dd[0], dd[1]), sg = Math.random() < .5 ? 1 : -1, bu1 = [ctr[0] - sg * dd[1] / ll * 520, ctr[1] + sg * dd[0] / ll * 520];
+      var starts = h.cornerStarts(corner, bu1, n), cells = h.freeCells(starts, function (x, y) { return Math.hypot(x - ctr[0], y - ctr[1]) > PLANET.rad + 150 && Math.hypot(x - bu1[0], y - bu1[1]) > 100; });
+      var bpos = [bu1]; // each next buoy lies somewhere in the half-plane on the far side of the planet from the previous one (90 to 270 degrees round it)
+      for (var bi = 1; bi < NB; bi++) {
+        var pv = bpos[bi - 1], pa = Math.atan2(pv[1] - ctr[1], pv[0] - ctr[0]), cand = null;
+        for (var tries = 0; tries < 400 && !cand; tries++) {
+          var an = pa + Math.PI / 2 + Math.random() * Math.PI, rr = 250 + Math.random() * 350, c = [ctr[0] + rr * Math.cos(an), ctr[1] + rr * Math.sin(an)];
+          if (c[0] > 60 && c[0] < W - 60 && c[1] > 60 && c[1] < H - 60 && bpos.every(function (b) { return Math.hypot(b[0] - c[0], b[1] - c[1]) > 150; }) && starts.every(function (st) { return Math.hypot(st[0] - c[0], st[1] - c[1]) > 150; })) cand = c;
+        }
+        bpos.push(cand || pick(cells));
+      }
+      bpos.forEach(function (q, j) { h.addBuoy(j + 1, q[0], q[1]); });
+      h.placeShips(names, starts, bu1);
+    },
+    before: function (h) { // each physics step: move the moons along their orbits, then pull ships and projectiles towards the planet and moons
+      var V = h.V, src = [[h.pfs.grav.c[0], h.pfs.grav.c[1], PLANET.k]];
+      h.pfs.moons.forEach(function (m, i) {
+        var p = orbit(h, m, h.time + FIX), c = m.body.GetPosition();
+        m.body.SetLinearVelocity(new V((p[0] / S - c.x) / FIX, (p[1] / S - c.y) / FIX)); src.push([c.x * S, c.y * S, MOONS[i].k]);
+      });
+      var pull = function (body) {
+        var p = body.GetPosition(), x = p.x * S, y = p.y * S, ax = 0, ay = 0, m = body.GetMass();
+        src.forEach(function (g) { var dx = g[0] - x, dy = g[1] - y, d2 = dx * dx + dy * dy + PLANET.soft * PLANET.soft, f = g[2] / (d2 * Math.sqrt(d2)); ax += dx * f; ay += dy * f; });
+        body.ApplyForce(new V(m * ax / S, m * ay / S), body.GetWorldCenter());
+      };
+      h.ships.forEach(function (sh) { if (!sh.dead) pull(sh.body); });
+      h.projectiles.forEach(function (pr) { pull(pr.body); });
+    },
+    init: function (h) { return { grav: h.pfs.grav }; },
+    snapshot: function (h) { var r1 = function (v) { return Math.round(v * 10) / 10; }; return { moons: h.pfs.moons.map(function (m) { var p = m.body.GetPosition(); return [r1(p.x * S), r1(p.y * S)]; }) }; }
+  },
+  client: {
+    accel: function (G, x, y, T) { // gravity (px/s^2) at host time T, same formula as the host uses
+      const g = G.pf.grav; let ax = 0, ay = 0;
+      const add = (bx, by, k) => { const dx = bx - x, dy = by - y, d2 = dx * dx + dy * dy + g.soft * g.soft, f = k / (d2 * Math.sqrt(d2)); ax += dx * f; ay += dy * f; };
+      add(g.c[0], g.c[1], g.planet.k); g.moons.forEach(m => { const a = m.a0 + m.w * T; add(g.c[0] + m.r * Math.cos(a), g.c[1] + m.r * Math.sin(a), m.k); });
+      return [ax, ay];
+    },
+    interp: function (a, b, L) { return { moons: a.moons.map(function (r, i) { return [L(r[0], b.moons[i][0]), L(r[1], b.moons[i][1])]; }) }; },
+    draw: function (G, I) {
+  if (G.pf.grav) { const g = G.pf.grav; ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.1)'; ctx.lineWidth = 1.5 / sc; ctx.setLineDash([6 / sc, 10 / sc]); // orbits, planet, moons
+    g.moons.forEach(m => { circle(g.c[0], g.c[1], m.r); ctx.stroke(); }); ctx.setLineDash([]);
+    const gr = ctx.createRadialGradient(g.c[0] - 25, g.c[1] - 25, 10, g.c[0], g.c[1], g.planet.rad); gr.addColorStop(0, '#6f8fbf'); gr.addColorStop(1, '#0d1a33');
+    ctx.shadowColor = '#7aa6ff'; ctx.shadowBlur = 40; circle(g.c[0], g.c[1], g.planet.rad); ctx.fillStyle = gr; ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(160,190,255,.6)'; ctx.lineWidth = 2; ctx.stroke();
+    I.pf.moons.forEach((m, i) => { circle(m[0], m[1], g.moons[i].rad); ctx.fillStyle = '#556'; ctx.shadowColor = '#aab'; ctx.shadowBlur = 15; ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = '#ccd'; ctx.lineWidth = 2; ctx.stroke();
+      const ex = g.c[0] + .75 * (m[0] - g.c[0]), ey = g.c[1] + .75 * (m[1] - g.c[1]); ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.fillStyle = 'rgba(255,255,255,.45)'; ctx.lineWidth = Math.max(1.5, 1.5 / sc); // pull of planet and moon cancels here
+      circle(ex, ey, 9); ctx.stroke(); circle(ex, ey, 2.5); ctx.fill(); ctx.restore(); }); ctx.restore(); }
+    }
+  }
+});
+})();
+</script>
+<script>// Playfield "Shells": thin concentric rings with gaps, each turning about its own (slightly misaligned) centre, alternately clockwise and counter-clockwise.
+// Three rings. Buoy 3 is in the middle; buoys 1 and 5 lie in the outer lane (between the two outer rings), 2 and 4 in the inner lane, each on the far side from the previous one (like Planet).
+(function () {
+var K = VOD.K, S = K.S, W = K.W, H = K.H, NB = K.NB, rnd = VOD.u.rnd, pick = VOD.u.pick;
+var RADII = [140, 270, 400], THICK = 14, GAP = 135, CHUNK = 12 * Math.PI / 180, WALL_MASS = 2; // ring radii, wall thickness and gap width in px; solid arcs are cut into 12 degree pieces for Box2D
+
+function ringArcs(r) { // the solid stretches of a ring (angles in radians from its own zero), leaving 1 or 2 gaps of GAP px
+  var gaps = r < 150 ? 1 : 2, ga = GAP / r, a0 = Math.random() * 2 * Math.PI, seg = 2 * Math.PI / gaps, out = [];
+  for (var g = 0; g < gaps; g++) { var s = a0 + g * seg + ga + rnd(0, .35 * (seg - 2 * ga)), e = a0 + (g + 1) * seg + rnd(-.35, 0) * (seg - 2 * ga); out.push([s, e]); }
+  return out; // [start, end] pairs; the gap lies between one end and the next start
+}
+
+VOD.playfield('shells', {
+  label: 'Shells', order: 25,
+  host: {
+    build: function (h, names) {
+      var b2 = h.b2, V = h.V, ctr = [W / 2, H / 2], corner = pick([[0,0],[W,0],[0,H],[W,H]]), n = names.length, i;
+      h.pfs.rings = [];
+      RADII.forEach(function (r, ri) {
+        var off = [rnd(-10, 10), rnd(-10, 10)], c = [ctr[0] + off[0], ctr[1] + off[1]], w = (ri % 2 ? -1 : 1) * rnd(.12, .32), arcs = ringArcs(r), ring = { kind: 'ring', mass: WALL_MASS };
+        var bd = new b2.Dynamics.b2BodyDef(); bd.type = b2.Dynamics.b2Body.b2_kinematicBody; bd.position.Set(c[0] / S, c[1] / S); bd.userData = ring; ring.body = h.world.CreateBody(bd);
+        arcs.forEach(function (ar) {
+          var pieces = Math.max(1, Math.ceil((ar[1] - ar[0]) / CHUNK));
+          for (var k = 0; k < pieces; k++) {
+            var s = ar[0] + (ar[1] - ar[0]) * k / pieces, e = ar[0] + (ar[1] - ar[0]) * (k + 1) / pieces, ro = r + THICK / 2, rin = r - THICK / 2;
+            var fd = new b2.Dynamics.b2FixtureDef(); fd.shape = new b2.Collision.Shapes.b2PolygonShape(); fd.friction = .2; fd.restitution = .5;
+            fd.shape.SetAsArray([[rin, s], [ro, s], [ro, e], [rin, e]].map(function (q) { return new V(q[0] * Math.cos(q[1]) / S, q[0] * Math.sin(q[1]) / S); }), 4);
+            ring.body.CreateFixture(fd);
+          }
+        });
+        ring.body.SetAngularVelocity(w); ring.def = { c: c, r: r, th: THICK, arcs: arcs }; h.pfs.rings.push(ring);
+      });
+      // buoy 1 in the outer lane, towards the start corner: the ships approach it head-on, with plenty of room before the first ring
+      var lane = [(RADII[0] + RADII[1]) / 2, (RADII[1] + RADII[2]) / 2], ca = Math.atan2(corner[1] - ctr[1], corner[0] - ctr[0]) + rnd(-.4, .4);
+      var bu1 = [ctr[0] + lane[1] * Math.cos(ca), ctr[1] + lane[1] * Math.sin(ca)], starts = h.cornerStarts(corner, bu1, n), bpos = [bu1];
+      var place = function (prev, r) { // in the lane of radius r, on the far side of the previous buoy (anywhere when the previous one is the centre)
+        var pa = prev ? Math.atan2(prev[1] - ctr[1], prev[0] - ctr[0]) : 0, best = null;
+        for (var tries = 0; tries < 300; tries++) {
+          var an = prev ? pa + Math.PI / 2 + Math.random() * Math.PI : Math.random() * 2 * Math.PI, c = [ctr[0] + r * Math.cos(an), ctr[1] + r * Math.sin(an)];
+          best = c; if (bpos.every(function (b) { return Math.hypot(b[0] - c[0], b[1] - c[1]) > 150; })) break;
+        }
+        return best;
+      };
+      bpos.push(place(bu1, lane[0])); bpos.push(ctr.slice()); bpos.push(place(null, lane[0])); bpos.push(place(bpos[3], lane[1])); // buoys 1 (outer lane), 2 (inner), 3 (centre), 4 (inner), 5 (outer)
+      bpos.forEach(function (q, j) { h.addBuoy(j + 1, q[0], q[1]); });
+      h.placeShips(names, starts, bu1);
+    },
+    init: function (h) { return { rings: h.pfs.rings.map(function (r) { return r.def; }) }; },
+    snapshot: function (h) { return { rings: h.pfs.rings.map(function (r) { return Math.round(r.body.GetAngle() * 1000) / 1000; }) }; }
+  },
+  client: {
+    interp: function (a, b, L, ang) { return { rings: a.rings.map(function (v, i) { return ang(v, b.rings[i]); }) }; },
+    draw: function (G, I) { // each ring: a white glowing outline, then black over it, so it reads like the rocks
+      G.pf.rings.forEach((rg, i) => {
+        const a = I.pf.rings[i]; ctx.save(); ctx.translate(rg.c[0], rg.c[1]); ctx.lineCap = 'round';
+        const arcs = () => rg.arcs.forEach(ar => { ctx.beginPath(); ctx.arc(0, 0, rg.r, ar[0] + a, ar[1] + a); ctx.stroke(); });
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = rg.th + 4; ctx.shadowColor = 'darkgrey'; ctx.shadowBlur = 20; arcs(); ctx.shadowBlur = 0; ctx.strokeStyle = '#000'; ctx.lineWidth = rg.th - 3; arcs(); ctx.restore();
+      });
+    }
+  }
+});
+})();
+</script>
+<script>// Weapon "Gun": instant hit on the designated ship if it is within range and in the clear; weak, with half the usual cooldown. VOD.weapon(id, def) - see src/README.md.
+(function () {
+var S = VOD.K.S, RANGE = 320, DMG = 25, CD = VOD.K.WEAPON_CD / 2;
+var noProjectiles = function (u) { return u && u.projectile; };
+
+VOD.weapon('gun', {
+  label: 'Gun', order: 10,
+  targeted: true,   // the pilot arms it, then taps the target ship; host.fire(i, target) gets that ship
+  range: RANGE,     // shown to the pilot as a circle while aiming
+  host: {
+    fire: function (h, sh, t) { // called only when the pilot is alive and off cooldown; return true when fired (and set sh.readyAt), or h.nofire(sh, 'reason')
+      var V = h.V, p = sh.body.GetPosition(), q = t.body.GetPosition(), x = p.x * S, y = p.y * S, dx = q.x * S - x, dy = q.y * S - y, len = Math.hypot(dx, dy) || 1;
+      if (len > RANGE) return h.nofire(sh, 'out of range');
+      var r = h.sight(sh.body, t.body, noProjectiles);
+      if (!r.clear) return h.nofire(sh, 'no line of sight');
+      h.damage(t, DMG); t.body.ApplyImpulse(new V(dx / len * .15, dy / len * .15), t.body.GetWorldCenter()); // a small shove
+      h.events.push({ e: 'shot', i: sh.i, x1: Math.round(x), y1: Math.round(y), x2: Math.round(r.pt.x * S), y2: Math.round(r.pt.y * S), hit: true });
+      sh.readyAt = h.time + CD; return true;
+    }
+  },
+  client: {
+    sound: function (e, v, T) { if (e.e === 'shot') { T.noise(.13, 'highpass', 4500, 1000, 1 * v); T.tone(900, 150, .16, 'square', .5 * v); T.tone(1800, 300, .08, 'sawtooth', .25 * v); } }, // a sharp crack
+    fx: function (f, now) { // draws one host event (f.e, f.at = arrival time) per frame; events live 0.7 s
+      if (f.e !== 'shot') return;
+      const a = 1 - (now - f.at) / 260; if (a <= 0) return; // gun tracer
+      ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, 2 / sc); ctx.beginPath(); ctx.moveTo(f.x1, f.y1); ctx.lineTo(f.x2, f.y2); ctx.stroke();
+      if (f.hit) { ctx.fillStyle = '#fff'; circle(f.x2, f.y2, 8 + 10 * (1 - a)); ctx.fill(); } ctx.restore();
+    }
+  }
+});
+})();
+</script>
+<script>// Weapon "Hammer": a heavy ball whirling round the ship on a tether. Not out at the start: the Fire button deploys it, and retracts it again (no cooldown).
+// It takes no damage; a ship it strikes loses hull (dmg % at full swing speed). It hits everything except buoys: a ship is knocked by the swing (its velocity changes, physics-style) and loses its planned thrusts and hull;
+// a rock is knocked the same way, and either way the owner gets the equal and opposite push through the tether; walls, rings, the planet and moons throw the hammer's owner back; a missile or mine it touches goes off.
+// The ball is a sensor driven round the ship each physics step; the knock is worked out in hit(). It is retracted when its owner is destroyed.
+(function () {
+var K = VOD.K, S = K.S, HAMMER = { R: 85, w: 2.5, rad: 17, kick: .6, again: .4, dmg: 30 }; // R: tether length px, w: rad/s, kick: share of the swing's relative velocity handed to the ship, again: s before the same ship can be hit again
+var find = function (h, i) { return (h.ws.hammers || []).filter(function (m) { return m.owner === i; })[0]; };
+var drop = function (h, m) { h.world.DestroyBody(m.body); h.ws.hammers.splice(h.ws.hammers.indexOf(m), 1); };
+
+VOD.weapon('hammer', {
+  label: 'Hammer', order: 40,
+  targeted: false,
+  host: {
+    fire: function (h, sh) { // toggles
+      h.ws.hammers = h.ws.hammers || []; var m = find(h, sh.i);
+      if (m) { drop(h, m); h.events.push({ e: 'retract', i: sh.i }); return true; }
+      var p = sh.body.GetPosition(); m = { kind: 'hammer', projectile: true, owner: sh.i, a: sh.body.GetAngle(),
+        hit: function (hh, o) {
+          var k = o && o.kind, ow = hh.ships[this.owner];
+          if (!o || k === 'buoy' || k === 'hammer' || o === ow) return;
+          if (k === 'missile' || k === 'mine') { o.exploding = true; return; } // a swatted weapon goes off
+          var key = 'ham' + this.owner; if (hh.time < (o[key] || 0)) return; o[key] = hh.time + HAMMER.again;
+          var vb = this.body.GetLinearVelocity(), bp = this.body.GetPosition(), x = Math.round(bp.x * S), y = Math.round(bp.y * S), V = hh.V;
+          if (k === 'ship') { // not a wreck or a fresh respawn
+            if (o.dead || hh.time < o.inv) return;
+            var vs = o.body.GetLinearVelocity(), mm = o.body.GetMass() * HAMMER.kick, rx = (vb.x - vs.x) * mm, ry = (vb.y - vs.y) * mm; // (GetLinearVelocity returns the live vector, so the swing is worked out before anything is applied)
+            o.body.ApplyImpulse(new V(rx, ry), o.body.GetWorldCenter()); o.q = [[0, 0], [0, 0]]; o.zc++;
+            ow.body.ApplyImpulse(new V(-rx, -ry), ow.body.GetWorldCenter()); // equal and opposite: the tether pulls the owner back
+            hh.damage(o, HAMMER.dmg * Math.min(1.5, Math.hypot(rx, ry) / mm / (HAMMER.w * HAMMER.R / S))); // the harder the swing meets it, the more it hurts
+            hh.events.push({ e: 'bonk', i: o.i, x: x, y: y });
+          } else if (o.body.GetType() === hh.b2.Dynamics.b2Body.b2_dynamicBody) { // a rock: a heavy one hardly moves, and the owner's recoil is capped at what a ship hit would give
+            var vr = o.body.GetLinearVelocity(), mr = Math.min(o.body.GetMass() * HAMMER.kick, ow.body.GetMass() * HAMMER.kick), rx = (vb.x - vr.x) * mr, ry = (vb.y - vr.y) * mr;
+            o.body.ApplyImpulse(new V(rx, ry), o.body.GetWorldCenter()); hh.events.push({ e: 'bonk', x: x, y: y });
+            ow.body.ApplyImpulse(new V(-rx, -ry), ow.body.GetWorldCenter()); // equal and opposite
+          } else if (!ow.dead) { // something fixed: the swing comes to a halt and jerks the owner back
+            var vo = ow.body.GetLinearVelocity(), mo = ow.body.GetMass() * HAMMER.kick * .5;
+            ow.body.ApplyImpulse(new V((vo.x - vb.x) * mo, (vo.y - vb.y) * mo), ow.body.GetWorldCenter()); hh.events.push({ e: 'bonk', x: x, y: y });
+          }
+        } };
+      m.body = h.body(m, p.x * S, p.y * S, null, HAMMER.rad); // a sensor
+      h.ws.hammers.push(m); h.events.push({ e: 'deploy', i: sh.i }); return true;
+    },
+    before: function (h) { // every step: carry each ball round its ship
+      (h.ws.hammers || []).slice().forEach(function (m) {
+        var sh = h.ships[m.owner]; if (sh.dead) { drop(h, m); return; }
+        m.a += HAMMER.w * K.FIX; var p = sh.body.GetPosition(), v = sh.body.GetLinearVelocity(), c = Math.cos(m.a), s = Math.sin(m.a), R = HAMMER.R / S;
+        m.body.SetPosition(new h.V(p.x + c * R, p.y + s * R));
+        m.body.SetLinearVelocity(new h.V(v.x - s * R * HAMMER.w, v.y + c * R * HAMMER.w)); // the ship's velocity plus the swing
+      });
+    },
+    init: function () { return { R: HAMMER.R }; },
+    snapshot: function (h) { var r1 = function (v) { return Math.round(v * 10) / 10; }; return { hammers: (h.ws.hammers || []).map(function (m) { var p = m.body.GetPosition(); return [r1(p.x * S), r1(p.y * S), m.owner]; }) }; }
+  },
+  client: {
+    sound: function (e, v, T) {
+      if (e.e === 'deploy') { T.tone(120, 520, .4, 'sawtooth', .3 * v); T.noise(.4, 'bandpass', 500, 1500, .8 * v); }
+      else if (e.e === 'retract') { T.tone(520, 120, .3, 'sawtooth', .3 * v); T.noise(.3, 'bandpass', 1500, 500, .7 * v); }
+      else if (e.e === 'bonk') { T.tone(310, 300, .35, 'triangle', .6 * v); T.tone(487, 480, .3, 'square', .15 * v); T.noise(.05, 'highpass', 4000, 1500, .5 * v); }
+    },
+    verb: function (s, me) { return (s.w.hammers || []).some(function (m) { return m[2] === me; }) ? 'Retract' : 'Deploy'; }, // button: "Deploy Hammer" / "Retract Hammer"
+    interp: function (a, b, L) { return { hammers: (a.hammers || []).map(function (m) { const n = (b.hammers || []).find(o => o[2] === m[2]); return n ? [L(m[0], n[0]), L(m[1], n[1]), m[2]] : m; }) }; },
+    draw: function (G, I, now) {
+      I.w.hammers.forEach(m => {
+        const sh = I.ships[m[2]], col = G.players[m[2]].color; if (!sh) return;
+        ctx.save(); ctx.strokeStyle = col; ctx.globalAlpha = .7; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sh.x, sh.y); ctx.lineTo(m[0], m[1]); ctx.stroke(); ctx.globalAlpha = 1; // the tether
+        ctx.shadowColor = col; ctx.shadowBlur = 16; ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; circle(m[0], m[1], 17); ctx.fill(); ctx.stroke();
+        ctx.shadowBlur = 0; ctx.fillStyle = col; circle(m[0], m[1], 6); ctx.fill(); ctx.restore();
+      });
+    },
+    fx: function (f, now) { // a knock: a ring where the ship was struck
+      if (f.e !== 'bonk') return;
+      const t = (now - f.at) / 500; if (t >= 1) return;
+      ctx.save(); ctx.globalAlpha = 1 - t; ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(3, 3 / sc); circle(f.x, f.y, 25 + 55 * t); ctx.stroke(); ctx.restore();
+    }
+  }
+});
+})();
+</script>
+<script>// Weapon "Harpoon": used like the gun (arm, tap the target), but shorter range, harder hitting, and it reels the two ships in: both are yanked towards each other.
+(function () {
+var K = VOD.K, S = K.S, RANGE = 260, DMG = 40, YANK = 100, CD = K.WEAPON_CD; // YANK: velocity change in px/s given to each ship, towards the other
+var noProjectiles = function (u) { return u && u.projectile; };
+
+VOD.weapon('harpoon', {
+  label: 'Harpoon', order: 50,
+  targeted: true, range: RANGE,
+  host: {
+    fire: function (h, sh, t) {
+      var V = h.V, p = sh.body.GetPosition(), q = t.body.GetPosition(), x = p.x * S, y = p.y * S, dx = q.x * S - x, dy = q.y * S - y, len = Math.hypot(dx, dy) || 1;
+      if (len > RANGE) return h.nofire(sh, 'out of range');
+      var r = h.sight(sh.body, t.body, noProjectiles);
+      if (!r.clear) return h.nofire(sh, 'no line of sight');
+      var ux = dx / len, uy = dy / len, kt = t.body.GetMass() * YANK / S, ks = sh.body.GetMass() * YANK / S;
+      t.body.ApplyImpulse(new V(-ux * kt, -uy * kt), t.body.GetWorldCenter()); sh.body.ApplyImpulse(new V(ux * ks, uy * ks), sh.body.GetWorldCenter()); // towards each other
+      h.damage(t, DMG);
+      h.events.push({ e: 'harpoon', i: sh.i, t: t.i });
+      sh.readyAt = h.time + CD; return true;
+    }
+  },
+  client: {
+    sound: function (e, v, T) { if (e.e === 'harpoon') { T.tone(700, 200, .4, 'sawtooth', .45 * v); T.noise(.2, 'bandpass', 1500, 500, .9 * v); T.tone(1400, 400, .15, 'square', .15 * v); } }, // a twang
+    fx: function (f, now) { // a rope between the two ships that goes slack as they close in
+      if (f.e !== 'harpoon') return;
+      const a = 1 - (now - f.at) / 600; if (a <= 0 || !snaps.length) return;
+      const I = interp(now - 100), s1 = I.ships[f.i], s2 = I.ships[f.t]; if (!s1 || !s2) return;
+      ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, 2 / sc); ctx.setLineDash([10 / sc, 6 / sc]); ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = '#fff'; circle(s2.x, s2.y, 7 + 8 * (1 - a)); ctx.fill(); ctx.restore();
+    }
+  }
+});
+})();
+</script>
+<script>// Weapon "Mine": the Fire button drops a mine behind the ship, where it stays (gravity still pulls it). After a short arming time it explodes when any ship, the
+// owner's too, comes within its trigger distance; the pilot can also detonate it at any time (the button becomes Detonate). One per pilot in play; the cooldown
+// starts when it is gone. The explosion is a heavy collision for every ship in reach (h.blast).
+(function () {
+var K = VOD.K, S = K.S, MINE = { arm: 1.5, trigger: 55, life: 90, radius: 9, drop: 75 }, BLAST = { r: 120, dmg: 60, push: 2 };
+var mine = function (h, i) { return h.projectiles.filter(function (m) { return m.kind === 'mine' && m.owner === i; }); };
+
+VOD.weapon('mine', {
+  label: 'Mine', order: 30,
+  targeted: false, // no target: Fire just drops it
+  host: {
+    fire: function (h, sh) {
+      if (mine(h, sh.i).length) return h.nofire(sh, 'a mine is already in play');
+      var p = sh.body.GetPosition(), v = sh.body.GetLinearVelocity(), sp = Math.hypot(v.x, v.y) * S, ang = sp > 5 ? Math.atan2(v.y, v.x) : sh.body.GetAngle();
+      var m = { kind: 'mine', projectile: true, owner: sh.i, born: h.time, exploding: false }; // a sensor: ships fly through it, it only watches them
+      m.body = h.body(m, p.x * S - Math.cos(ang) * MINE.drop, p.y * S - Math.sin(ang) * MINE.drop, null, MINE.radius); m.body.SetLinearVelocity(new h.V(0, 0));
+      h.projectiles.push(m); h.events.push({ e: 'drop', i: sh.i }); return true;
+    },
+    detonate: function (h, i) { var ms = mine(h, i); ms.forEach(function (m) { m.exploding = true; }); return ms.length > 0; },
+    before: function (h) { // every step: look for ships in reach of an armed mine, and for old mines
+      h.projectiles.forEach(function (m) {
+        if (m.kind !== 'mine') return;
+        if (h.time - m.born > MINE.life) m.exploding = true;
+        if (m.exploding || h.time - m.born < MINE.arm) return;
+        var p = m.body.GetPosition();
+        h.ships.forEach(function (s) { if (!s.dead && Math.hypot(s.body.GetPosition().x - p.x, s.body.GetPosition().y - p.y) * S < MINE.trigger) m.exploding = true; });
+      });
+    },
+    after: function (h) {
+      for (var i = h.projectiles.length - 1; i >= 0; i--) {
+        var m = h.projectiles[i]; if (m.kind !== 'mine' || !m.exploding) continue;
+        var p = m.body.GetPosition(); h.blast(p.x * S, p.y * S, BLAST); h.world.DestroyBody(m.body); h.projectiles.splice(i, 1);
+        var ow = h.ships[m.owner]; if (ow) ow.readyAt = h.time + K.WEAPON_CD;
+      }
+    },
+    init: function () { return { arm: MINE.arm, trigger: MINE.trigger }; },
+    snapshot: function (h) { // [x, y, owner, armed 0/1]
+      var r1 = function (v) { return Math.round(v * 10) / 10; };
+      return { mines: h.projectiles.filter(function (m) { return m.kind === 'mine'; }).map(function (m) { var p = m.body.GetPosition(); return [r1(p.x * S), r1(p.y * S), m.owner, h.time - m.born >= MINE.arm ? 1 : 0]; }) };
+    }
+  },
+  client: {
+    sound: function (e, v, T) { if (e.e === 'drop') { T.tone(300, 120, .14, 'square', .4 * v); T.tone(1000, 1000, .08, 'sine', .4 * v, .14); } },
+    verb: 'Drop', // the button reads "Drop Mine"
+    canDetonate: function (s, me) { return (s.w.mines || []).some(function (m) { return m[2] === me; }); },
+    interp: function (a, b, L) { return { mines: (a.mines || []).map(function (m) { const n = (b.mines || []).find(o => o[2] === m[2]); return n ? [L(m[0], n[0]), L(m[1], n[1]), m[2], n[3]] : m; }) }; },
+    draw: function (G, I, now) {
+      I.w.mines.forEach(m => {
+        const col = G.players[m[2]].color, pulse = m[3] ? .5 + .5 * Math.sin(now / 120) : .25 + .25 * Math.sin(now / 400);
+        ctx.save(); ctx.translate(m[0], m[1]); ctx.shadowColor = col; ctx.shadowBlur = 14; ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+        for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; ctx.beginPath(); ctx.moveTo(Math.cos(a) * 8, Math.sin(a) * 8); ctx.lineTo(Math.cos(a) * 15, Math.sin(a) * 15); ctx.stroke(); }
+        circle(0, 0, 9); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0; ctx.fillStyle = col; ctx.globalAlpha = pulse; circle(0, 0, 4); ctx.fill(); ctx.restore();
+        if (m[3] && G.w && G.w.trigger) { ctx.save(); ctx.globalAlpha = .18; ctx.strokeStyle = col; ctx.setLineDash([6 / sc, 8 / sc]); ctx.lineWidth = Math.max(1.5, 1.5 / sc); circle(m[0], m[1], G.w.trigger); ctx.stroke(); ctx.restore(); } // its trigger distance
+      });
+    },
+    fx: function (f, now) { // the explosion: a flash and a ring that grows to the blast radius
+      if (f.e !== 'blast') return;
+      const t = (now - f.at) / 700; if (t >= 1) return;
+      ctx.save(); ctx.globalAlpha = 1 - t; ctx.fillStyle = '#fff'; if (t < .2) { circle(f.x, f.y, f.r * .5 * (1 - t / .2) + 12); ctx.fill(); }
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(3, 3 / sc); circle(f.x, f.y, f.r * Math.min(1, t * 2.5)); ctx.stroke(); ctx.restore();
+    }
+  }
+});
+})();
+</script>
+<script>// Weapon "Missile": launched along the ship's own course with a little extra speed; with a clear line to the target, it accelerates flat out
+// towards it (twice a ship's maximum thrust). One per pilot in play; the pilot can detonate it at any time (Fire button becomes Detonate). It explodes on touching
+// anything but a buoy, or when its fuel runs out. The cooldown starts when the missile is gone.
+(function () {
+var K = VOD.K, S = K.S, STEP = K.STEP, MISSILE = { dv: 2 * K.POWER / STEP, every: .5, boost: 60, safe: 1.5, speed: 100, life: 20, radius: 5 }, BLAST = { r: 110, dmg: 60, push: 2 }; // blast: 60% of full hull at the centre, half of that at the edge
+// MISSILE.boost: extra launch speed (px/s) along the ship's course; safe: seconds during which it ignores its own ship. MISSILE.dv: flat-out acceleration over one STEP (px/s), spent in small guidance pulses every `every` s; speed: the closing speed it aims for
+var isProjectile = function (u) { return u && u.projectile; };
+var mine = function (h, i) { return h.projectiles.filter(function (m) { return m.kind === 'missile' && m.owner === i; }); };
+
+function steer(h, m) { // a guidance pulse: with a clear view of the target, thrust flat out in the direction that cancels the sideways drift and closes in
+  var t = h.ships[m.target]; if (!t || t.dead || !h.sight(m.body, t.body, isProjectile).clear) return; // otherwise coast
+  var V = h.V, p = m.body.GetPosition(), q = t.body.GetPosition(), v = m.body.GetLinearVelocity(), tv = t.body.GetLinearVelocity(), dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy) || 1;
+  var nx = dx / len * MISSILE.speed / S - (v.x - tv.x), ny = dy / len * MISSILE.speed / S - (v.y - tv.y), nl = Math.hypot(nx, ny) || 1, k = MISSILE.dv * MISSILE.every / STEP / S * m.body.GetMass(); // wanted change of velocity gives the direction; the pulse is limited to the engine's budget
+  m.body.ApplyImpulse(new V(nx / nl * k, ny / nl * k), m.body.GetWorldCenter());
+}
+
+VOD.weapon('missile', {
+  label: 'Missile', order: 20,
+  targeted: true,
+  host: {
+    fire: function (h, sh, t) {
+      if (mine(h, sh.i).length) return h.nofire(sh, 'a missile is already in flight');
+      var p = sh.body.GetPosition(), v = sh.body.GetLinearVelocity(), sp = Math.hypot(v.x, v.y) * S, ang = sp > 5 ? Math.atan2(v.y, v.x) : sh.body.GetAngle(), ux = Math.cos(ang), uy = Math.sin(ang); // leaves along the ship's own course (its nose when it is standing still)
+      var m = { kind: 'missile', projectile: true, owner: sh.i, target: t.i, born: h.time, nextPulse: h.time + MISSILE.every, exploding: false,
+        hit: function (hh, o) { if (o.kind === 'buoy' || (o.kind === 'ship' && o.i === this.owner && hh.time - this.born < MISSILE.safe)) return; this.exploding = true; } }; // it cannot touch its own ship while pulling away
+      m.body = h.body(m, p.x * S + ux * 40, p.y * S + uy * 40, null, MISSILE.radius, 'dynamic'); // starts just ahead of the hull
+      m.body.SetBullet(true); m.body.SetFixedRotation(true); m.body.SetLinearVelocity(new h.V(v.x + ux * MISSILE.boost / S, v.y + uy * MISSILE.boost / S)); // the ship's velocity plus a boost along it
+      h.projectiles.push(m); steer(h, m); h.events.push({ e: 'launch', i: sh.i }); return true;
+    },
+    detonate: function (h, i) { var ms = mine(h, i); ms.forEach(function (m) { m.exploding = true; }); return ms.length > 0; },
+    before: function (h) { h.projectiles.forEach(function (m) { if (m.kind !== 'missile') return; if (h.time >= m.nextPulse) { steer(h, m); m.nextPulse += MISSILE.every; } if (h.time - m.born > MISSILE.life) m.exploding = true; }); },
+    after: function (h) { // explode the flagged missiles (not inside the contact callback), then start their owners' cooldown
+      for (var i = h.projectiles.length - 1; i >= 0; i--) {
+        var m = h.projectiles[i]; if (m.kind !== 'missile' || !m.exploding) continue;
+        var p = m.body.GetPosition(); h.blast(p.x * S, p.y * S, BLAST); h.world.DestroyBody(m.body); h.projectiles.splice(i, 1);
+        var ow = h.ships[m.owner]; if (ow) ow.readyAt = h.time + K.WEAPON_CD;
+      }
+    },
+    snapshot: function (h) { // [x, y, owner, vx, vy]
+      var r1 = function (v) { return Math.round(v * 10) / 10; };
+      return { missiles: h.projectiles.filter(function (m) { return m.kind === 'missile'; }).map(function (m) { var p = m.body.GetPosition(), v = m.body.GetLinearVelocity(); return [r1(p.x * S), r1(p.y * S), m.owner, r1(v.x * S), r1(v.y * S)]; }) };
+    }
+  },
+  client: {
+    sound: function (e, v, T) { if (e.e === 'launch') { T.tone(320, 120, .18, 'triangle', .5 * v); T.noise(.6, 'bandpass', 500, 1800, 1.2 * v); T.tone(250, 800, .55, 'sawtooth', .12 * v); } }, // a thunk, then a rising whoosh
+    canDetonate: function (s, me) { return (s.w.missiles || []).some(function (m) { return m[2] === me; }); }, // then the Fire button detonates
+    interp: function (a, b, L) { return { missiles: (a.missiles || []).map(function (m) { const n = (b.missiles || []).find(o => o[2] === m[2]); return n ? [L(m[0], n[0]), L(m[1], n[1]), m[2], L(m[3], n[3]), L(m[4], n[4])] : m; }) }; },
+    draw: function (G, I, now) {
+      I.w.missiles.forEach(m => {
+        const col = G.players[m[2]].color, ang = Math.atan2(m[4], m[3]), fl = 10 + 8 * Math.random();
+        ctx.save(); ctx.translate(m[0], m[1]); ctx.rotate(ang);
+        ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.beginPath(); ctx.moveTo(-5, -3); ctx.lineTo(-5 - fl, 0); ctx.lineTo(-5, 3); ctx.closePath(); ctx.fill();
+        ctx.shadowColor = col; ctx.shadowBlur = 14; ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(9, 0); ctx.lineTo(-6, -5); ctx.lineTo(-6, 5); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+      });
+    },
+    fx: function (f, now) { // the explosion: a flash and a ring that grows to the blast radius
+      if (f.e !== 'blast') return;
+      const t = (now - f.at) / 700; if (t >= 1) return;
+      ctx.save(); ctx.globalAlpha = 1 - t; ctx.fillStyle = '#fff'; if (t < .2) { circle(f.x, f.y, f.r * .5 * (1 - t / .2) + 12); ctx.fill(); }
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(3, 3 / sc); circle(f.x, f.y, f.r * Math.min(1, t * 2.5)); ctx.stroke(); ctx.restore();
+    }
+  }
+});
+})();
+</script>
+<script>// Bump this on every update; build.py shows it in the page title, the dialog and the in-game sidebar.
+const VERSION = 'v30';
+</script>
+<script>// Connection layer. Three interchangeable transports with the small PeerJS-like interface the lobby uses:
+//   new T(id)  .id  .on('open' | 'error' | 'connection' | 'disconnected')  .connect(id) -> conn  .destroy()
+//   conn: .on('open' | 'data')  .send(message)
+// - (PeerJS, direct WebRTC, was tried earlier and dropped: it failed on some browsers and networks)
+// - LocalPeer: tabs of one browser, through BroadcastChannel
+// - RelayPeer: WebSocket relay (relay/worker.js on Cloudflare); needs the relay address and secret in the page address
+// Messages are plain JSON-able objects. Adding another transport means adding another class like these.
+
+// Same-browser transport (tabs of this page, through BroadcastChannel) with the small part of the PeerJS interface used here. Used when online play is unavailable.
+class LocalConn {
+  constructor(p, remote, cid) { this.p = p; this.peer = remote; this.cid = cid; this.h = {}; }
+  on(e, f) { (this.h[e] = this.h[e] || []).push(f); return this; }
+  emit(e, ...a) { (this.h[e] || []).slice().forEach(f => f(...a)); }
+  send(d) { this.p.bc.postMessage({ t: 'data', to: this.peer, cid: this.cid, d }); }
+  close() {}
+}
+class LocalPeer {
+  constructor(id) {
+    this.h = {}; this.conns = {}; this.up = false; this.id = id || 'l' + Math.random().toString(36).slice(2, 9);
+    this.bc = new BroadcastChannel('vodjs-local'); this.bc.onmessage = e => this.recv(e.data); this.bc.postMessage({ t: 'who', id: this.id });
+    this.timer = setTimeout(() => { this.up = true; this.emit('open', this.id); }, 250);
+  }
+  on(e, f) { (this.h[e] = this.h[e] || []).push(f); return this; }
+  emit(e, ...a) { (this.h[e] || []).slice().forEach(f => f(...a)); }
+  recv(m) {
+    if (m.t === 'who' && this.up && m.id === this.id) this.bc.postMessage({ t: 'taken', id: m.id });
+    else if (m.t === 'taken' && !this.up && m.id === this.id) { clearTimeout(this.timer); this.emit('error', { type: 'unavailable-id' }); }
+    else if (m.t === 'connect' && this.up && m.to === this.id) { const c = new LocalConn(this, m.from, m.cid); this.conns[m.cid] = c; this.bc.postMessage({ t: 'accept', to: m.from, cid: m.cid }); this.emit('connection', c); setTimeout(() => c.emit('open'), 0); }
+    else if (m.t === 'accept' && m.to === this.id && this.conns[m.cid]) { clearTimeout(this.conns[m.cid].timer); setTimeout(() => this.conns[m.cid].emit('open'), 0); }
+    else if (m.t === 'data' && m.to === this.id && this.conns[m.cid]) this.conns[m.cid].emit('data', m.d);
+  }
+  connect(to) { const cid = Math.random().toString(36).slice(2), c = new LocalConn(this, to, cid); this.conns[cid] = c; c.timer = setTimeout(() => this.emit('error', { type: 'peer-unavailable' }), 700); this.bc.postMessage({ t: 'connect', to, from: this.id, cid }); return c; }
+  destroy() { clearTimeout(this.timer); try { this.bc.close(); } catch (_) {} }
+}
+
+const b64url = x => btoa(String.fromCharCode(...new TextEncoder().encode(x))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); // any secret fits in a WebSocket subprotocol this way
+// ?relay=ADDRESS and #key=SECRET (the part after # never leaves the browser; ?key= also works). null when not configured.
+function relayConfig() {
+  const q = new URLSearchParams(location.search), h = new URLSearchParams(location.hash.slice(1));
+  let a = (q.get('relay') || '').trim().replace(/\/+$/, ''); const key = h.get('key') || q.get('key') || '';
+  if (!a || !key) return null;
+  const base = /^https:/.test(a) ? a.replace(/^https:/, 'wss:') : /^http:/.test(a) ? a.replace(/^http:/, 'ws:') : /^wss?:/.test(a) ? a : 'wss://' + a;
+  return { base, key, host: base.replace(/^wss?:\/\//, '') };
+}
+class RelayConn {
+  constructor(p, remote, cid) { this.p = p; this.peer = remote; this.cid = cid; this.h = {}; }
+  on(e, f) { (this.h[e] = this.h[e] || []).push(f); return this; }
+  emit(e, ...a) { (this.h[e] || []).slice().forEach(f => f(...a)); }
+  send(d) { this.p.send(this.peer, { t: 'data', cid: this.cid, d }); }
+  close() {}
+}
+class RelayPeer {
+  constructor(id, cfg) { // cfg: { base, key, room }
+    this.h = {}; this.conns = {}; this.up = false; this.failed = false; this.id = id || 'r' + Math.random().toString(36).slice(2, 9);
+    this.ws = new WebSocket(cfg.base + '/' + cfg.room, ['vodjs-relay', 'k.' + b64url(cfg.key)]);
+    this.ws.onopen = () => this.ws.send(JSON.stringify({ t: 'hi', id: this.id }));
+    this.ws.onmessage = e => { let m; try { m = JSON.parse(e.data); } catch (_) { return; } this.recv(m); };
+    this.ws.onclose = () => { clearInterval(this.ka); if (this.up) this.emit('disconnected'); else if (!this.failed) this.emit('error', { type: 'relay-refused' }); };
+    this.ka = setInterval(() => { if (this.ws.readyState === 1) this.ws.send('{"t":"ping"}'); }, 25000);
+  }
+  on(e, f) { (this.h[e] = this.h[e] || []).push(f); return this; }
+  emit(e, ...a) { (this.h[e] || []).slice().forEach(f => f(...a)); }
+  recv(m) {
+    if (m.t === 'ok') { this.up = true; this.emit('open', this.id); }
+    else if (m.t === 'err') { if (m.type !== 'peer-unavailable') this.failed = true; this.emit('error', { type: m.type }); }
+    else if (m.t === 'from') this.inner(m.from, m.d);
+  }
+  inner(from, d) {
+    if (!d) return;
+    if (d.t === 'connect') { const c = new RelayConn(this, from, d.cid); this.conns[d.cid] = c; this.send(from, { t: 'accept', cid: d.cid }); this.emit('connection', c); setTimeout(() => c.emit('open'), 0); }
+    else if (d.t === 'accept' && this.conns[d.cid]) { clearTimeout(this.conns[d.cid].timer); setTimeout(() => this.conns[d.cid].emit('open'), 0); }
+    else if (d.t === 'data' && this.conns[d.cid]) this.conns[d.cid].emit('data', d.d);
+  }
+  send(to, d) { if (this.ws.readyState === 1) this.ws.send(JSON.stringify({ t: 'to', to, d })); }
+  connect(to) { const cid = Math.random().toString(36).slice(2), c = new RelayConn(this, to, cid); this.conns[cid] = c; c.timer = setTimeout(() => this.emit('error', { type: 'peer-unavailable' }), 6000); this.send(to, { t: 'connect', cid }); return c; }
+  destroy() { clearInterval(this.ka); try { this.ws.close(); } catch (_) {} }
+}
+</script>
+<script>addEventListener('error', e => { const d = document.getElementById('err'); d.style.display = 'block'; d.textContent += (e.message || 'error') + ' ' + (e.filename || '').split('/').pop() + ':' + (e.lineno || '') + '\n'; });
 const $ = id => document.getElementById(id), ctx = $('c').getContext('2d');
+$('ver').textContent = VERSION;
 const vw = () => $('c').clientWidth, vh = () => $('c').clientHeight;
 let electedDone = false, peer, roster = [], coordConns = [], lobbyConn = null, hostConn = null, sim = null, links = {}, me = 0, iAmHost = false;
 let G = null, snaps = [], fx = [], local = null, sc = 1, ox = 0, oy = 0, pressed = false, lastSend = 0, over = null;
-const msg = t => $('msg').textContent = t, myName = () => $('name').value.trim() || 'Player' + Math.floor(Math.random() * 90 + 10);
+let netNote = '';
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// status line under the dialog: the connection note (muted) and the current message; kind 'err' marks a problem
+const msg = (t, kind) => { const el = $('msg'); el.className = kind || ''; el.innerHTML = (netNote ? '<div class="note">' + esc(netNote).replace(/\n/g, '<br>') + '</div>' : '') + (t ? '<div class="main">' + esc(t).replace(/\n/g, '<br>') + '</div>' : ''); el.style.display = netNote || t ? '' : 'none'; };
+const myName = () => $('name').value.trim() || 'Player' + Math.floor(Math.random() * 90 + 10);
 
-// ---------- lobby and host election ----------
-const isMobile = () => matchMedia('(pointer:coarse)').matches || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent), canHost = () => $('canhost').checked;
-$('canhost').checked = !isMobile(); // phones and tablets opt out of hosting by default
+// ---------- lobby ----------
+const urlq = new URLSearchParams(location.search);
+// development links: ?field=caves&corridor=240&loops=30&rough=80&tilt=80&seed=7 (cave tuning is not in the dialog)
+const COLS = ['cyan', 'magenta', 'lightgreen', 'yellow', 'orange']; // the ships' colours, in order
+const fillSelect = (sel, items, none) => { sel.innerHTML = (none ? '<option value="none">None</option>' : '') + items.map(d => '<option value="' + d.id + '">' + d.label + '</option>').join(''); };
+const fillWeapons = (sel, none) => fillSelect(sel, VOD.list('weapons'), none); // dialogs list whatever is registered: playfields in src/playfields, weapons in src/weapons
+fillSelect($('field'), VOD.list('playfields')); fillSelect($('sfield'), VOD.list('playfields'));
+if (urlq.get('field') && VOD.playfields[urlq.get('field')]) $('field').value = $('sfield').value = urlq.get('field');
+fillWeapons($('sweapon'), true); fillWeapons($('pweapon'), false);
+const weaponLabel = id => (VOD.weapons[id] || { label: '' }).label;
+const hostWeapon = () => $('weaponsOn').checked ? $('pweapon').value : null; // the weapon of an online game: only when the host switched weapons on
+const gameOpts = (fresh, weapon, field) => Object.assign({}, ((VOD.playfields[field] || {}).client || {}).opts ? VOD.playfields[field].client.opts(urlq, fresh) : {}, { weapon });
 function onIncoming(c, m) {
-  if (m.t === 'hello') { if (roster.length >= 5 || electedDone) { c.send({ t: 'full' }); return; } roster.push({ pid: m.pid, name: m.name, mobile: !!m.mobile, canHost: m.canHost !== false, conn: c }); coordConns.push(c); showRoster(); }
+  if (m.t === 'hello') { if (roster.length >= 5 || electedDone) { c.send({ t: 'full' }); return; } roster.push({ pid: m.pid, name: m.name, conn: c }); coordConns.push(c); showRoster(); }
   else if (m.t === 'join') { links[m.pid] = c; maybeLaunch(); }
+  else if (m.t === 'fire' && sim) { const i = roster.findIndex(r => r.pid === c.metadata_pid); sim.fire(i, m.target); }
+  else if (m.t === 'detonate' && sim) { const i = roster.findIndex(r => r.pid === c.metadata_pid); sim.detonate(i); }
   else if (m.t === 'thrust' && sim) { const i = roster.findIndex(r => r.pid === c.metadata_pid); sim.setThrust(i, m.k, m.x, m.y); }
 }
+const gameCode = () => ($('code').value.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[-_]+|[-_]+$/g, '') || 'a'); // the code is not secret: anyone who types it can join
+function showBlocked(txt) { const d = document.getElementById('err'); d.style.display = 'block'; d.textContent += txt + '\n'; }
+document.addEventListener('securitypolicyviolation', e => showBlocked('Blocked by the page security policy: ' + e.blockedURI + ' (' + e.violatedDirective + ')'));
+addEventListener('pagehide', () => { try { if (peer) peer.destroy(); } catch (_) {} });
 function newPeer(id, ready) {
-  if (!window.Peer) { msg('Loading networking...'); const sc_ = document.createElement('script'); sc_.src = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
-    sc_.onload = () => newPeer(id, ready); sc_.onerror = () => msg('Multiplayer is not available here. Host this page on your own site for network play. Solo practice still works.'); document.head.appendChild(sc_); return; }
-  peer = id ? new Peer(id) : new Peer();
-  peer.on('open', ready);
-  peer.on('error', e => e.type === 'unavailable-id' ? newPeer('vodjs-' + Math.random().toString(36).slice(2, 6), ready) : msg(e.type === 'peer-unavailable' ? 'No game found with that code.' : 'Network error (' + e.type + '). Inside the Claude app multiplayer is not available; host this page on your own site.'));
-  peer.on('connection', c => c.on('data', m => { if (m.pid) c.metadata_pid = m.pid; onIncoming(c, m); }));
+  if (peer) { try { peer.destroy(); } catch (_) {} peer = null; }
+  netNote = ''; msg('Connecting...'); startPeer(relayConfig() ? 'relay' : 'local', id, ready);
 }
-const fieldName = f => f === 'planet' ? 'planet and moons' : 'classic rocks';
-function showRoster() { msg('Players: ' + roster.map(r => r.name).join(', ') + ' | Playfield: ' + fieldName($('field').value)); $('start').style.display = roster.length > 0 ? '' : 'none';
-  coordConns.forEach(c => c.send({ t: 'roster', names: roster.map(r => r.name), field: $('field').value })); }
-$('field').onchange = () => { if (peer && roster.length) showRoster(); };
+function startPeer(kind, id, ready) {
+  if (kind === 'local' && typeof BroadcastChannel === 'undefined') { msg('This browser cannot connect players here.', 'err'); return; }
+  const rc = relayConfig(); let opened = false, dead = false, tm;
+  const fail = why => { if (dead) return; dead = true; clearTimeout(tm); try { p.destroy(); } catch (_) {} msg((kind === 'relay' ? 'Could not connect to the relay: ' : 'Connection error: ') + why + '.', 'err'); };
+  const p = peer = kind === 'relay' ? new RelayPeer(id, { base: rc.base, key: rc.key, room: 'g-' + gameCode() }) : new LocalPeer(id);
+  tm = setTimeout(() => { if (!opened) fail('no answer in 8 seconds'); }, 8000);
+  p.on('open', i => { if (dead) return; opened = true; clearTimeout(tm); netNote = 'Connection: ' + (kind === 'relay' ? 'relay (' + rc.host + ')' : 'same browser only (development)'); msg(''); ready(i); });
+  p.on('error', e => {
+    if (dead) return;
+    if (e.type === 'unavailable-id') { dead = true; clearTimeout(tm); msg('The game ID "' + gameCode() + '" is already in use. Pick another ID.', 'err'); }
+    else if (e.type === 'peer-unavailable') msg('No game found with the ID "' + gameCode() + '". Check the ID, and that the host has pressed Host game.' + (!rc ? ' To play with others, open this page with the relay address and key.' : ''), 'err');
+    else if (!opened) fail(e.type === 'relay-refused' ? 'the secret is wrong, or the relay is unreachable' : e.type || 'error'); else msg('Network error (' + e.type + ').', 'err');
+  });
+  p.on('disconnected', () => { if (opened) msg('Lost the connection to the relay.', 'err'); });
+  p.on('connection', c => c.on('data', m => { if (m.pid) c.metadata_pid = m.pid; onIncoming(c, m); }));
+}
+const fieldName = f => (VOD.playfields[f] || { label: '' }).label;
+function renderLobby(names, field, you, isHost, weapon) { // the open-game panel: game ID, playfield, who is in
+  $('setup').style.display = 'none'; $('panel').style.display = ''; $('pgid').textContent = gameCode(); $('pfield').textContent = field ? fieldName(field) : '';
+  $('plist').innerHTML = names.map((n, i) => '<li><span class="dot" style="background:' + COLS[i % COLS.length] + '"></span><span>' + esc(n) + '</span><span class="tag">' + [i === 0 ? 'host' : '', i === you ? 'you' : ''].filter(Boolean).join(' &middot; ') + '</span></li>').join('');
+  $('pweaprow').style.display = isHost && $('weaponsOn').checked ? '' : 'none'; $('pwbadge').style.display = !isHost && weapon ? '' : 'none'; $('pwbadge').textContent = weapon ? 'Weapon: ' + weaponLabel(weapon) : '';
+  $('start').style.display = isHost ? '' : 'none'; $('pnote').className = isHost ? '' : 'wait';
+  $('pnote').textContent = isHost ? 'Share the game ID with the other players, then press Start game when everybody is in.' : 'Waiting for the host to start the game';
+}
+function showRoster() { const names = roster.map(r => r.name), field = $('field').value, weapon = hostWeapon(); renderLobby(names, field, 0, true, weapon);
+  coordConns.forEach((c, i) => c.send({ t: 'roster', names, field, weapon, you: i + 1 })); }
+$('pweapon').onchange = () => { if (roster.length) showRoster(); };
+function leaveLobby() { try { if (peer) peer.destroy(); } catch (_) {} peer = null; iAmHost = false; roster = []; coordConns = []; lobbyConn = hostConn = null; links = {}; sim = null; electedDone = false; netNote = ''; msg('');
+  $('panel').style.display = 'none'; $('setup').style.display = ''; }
+$('leave').onclick = leaveLobby;
+// back to the start dialog from a finished (or abandoned) game: throw the game state away and leave the connection
+function newGame() { clearInterval(loopId); resetGameState(); soloMode = false;
+  leaveLobby(); $('lobby').style.display = ''; $('bnew').style.display = 'none'; $('hud').innerHTML = ''; }
 $('create').onclick = () => { const name = myName();
-  newPeer('vodjs-' + Math.random().toString(36).slice(2, 6), id => { roster = [{ pid: id, name, mobile: isMobile(), canHost: canHost() }]; $('code').value = id; showRoster(); msg('Share this code: ' + id + ' (players: ' + name + ')'); }); };
-$('join').onclick = () => { const name = myName(), code = $('code').value.trim(); $('field').disabled = true; // the game creator chooses the playfield
-  newPeer(null, id => { lobbyConn = peer.connect(code, { reliable: true });
-    lobbyConn.on('open', () => { lobbyConn.send({ t: 'hello', pid: id, name, mobile: isMobile(), canHost: canHost() }); msg('Joined. Waiting for the host to start...'); });
+  newPeer('vodjs-' + gameCode(), id => { roster = [{ pid: id, name }]; showRoster(); }); };
+$('join').onclick = () => { const name = myName();
+  newPeer(null, id => { msg('Looking for game "' + gameCode() + '"...'); lobbyConn = peer.connect('vodjs-' + gameCode(), { reliable: true });
+    const giveUp = setTimeout(() => msg('Could not reach game "' + gameCode() + '". Check the ID, and that the host has pressed Host game.', 'err'), 12000);
+    lobbyConn.on('open', () => { clearTimeout(giveUp); lobbyConn.send({ t: 'hello', pid: id, name }); msg(''); renderLobby([], null, -1, false); });
     lobbyConn.on('data', m => {
-      if (m.t === 'full') msg('That game is full or has already started.');
-      if (m.t === 'roster') msg('Players: ' + m.names.join(', ') + ' | Playfield: ' + fieldName(m.field));
-      if (m.t === 'host') elected(m.hostId, m.roster, m.field);
+      if (m.t === 'full') { leaveLobby(); msg('That game is full or has already started.', 'err'); }
+      if (m.t === 'roster') renderLobby(m.names, m.field, m.you, false, m.weapon);
+      if (m.t === 'host') elected(m.hostId, m.roster, m.field, m.opts);
     }); }); };
-// Host choice: only players who ticked "I can host"; laptops and desktops before phones and tablets; then the game creator, then join order.
+// the game's creator is the host
 $('start').onclick = () => { $('start').style.display = 'none'; electedDone = true;
-  const pool = roster.filter(r => r.canHost), cand = pool.length ? pool : roster, best = cand.find(r => !r.mobile) || cand[0], list = roster.map(r => ({ pid: r.pid, name: r.name }));
-  coordConns.forEach(c => c.send({ t: 'host', hostId: best.pid, roster: list, field: $('field').value })); elected(best.pid, list, $('field').value); };
-function elected(hostId, list, field) {
+  const list = roster.map(r => ({ pid: r.pid, name: r.name })), field = $('field').value, opts = gameOpts(false, hostWeapon(), field);
+  coordConns.forEach(c => c.send({ t: 'host', hostId: roster[0].pid, roster: list, field, opts })); elected(roster[0].pid, list, field, opts); };
+function elected(hostId, list, field, opts) {
   roster = list; me = list.findIndex(r => r.pid === peer.id); iAmHost = hostId === peer.id;
-  if (iAmHost) { sim = new VodHost(list.map(r => r.name), field); msg('You are the host. Keep this tab visible.'); maybeLaunch(); setTimeout(() => maybeLaunch(true), 8000); }
-  else { hostConn = peer.connect(hostId, { reliable: true });
+  if (iAmHost) { sim = new VOD.Host(list.map(r => r.name), field, opts); msg('You are the host: keep this tab visible while playing.'); maybeLaunch(); setTimeout(() => maybeLaunch(true), 8000); }
+  else { msg('Connecting to the host...'); hostConn = peer.connect(hostId, { reliable: true });
+    setTimeout(() => { if (!G) msg('Could not connect to the host.', 'err'); }, 15000);
     hostConn.on('open', () => hostConn.send({ t: 'join', pid: peer.id })); hostConn.on('data', onHostMsg); }
 }
-$('solo').onclick = () => { roster = [{ pid: 'me', name: myName() }]; me = 0; iAmHost = true; sim = new VodHost([roster[0].name], $('field').value); maybeLaunch(true); };
+let soloMode = false, soloName = '', loopId = null;
+function startSolo(fresh) { roster = [{ pid: 'me', name: soloName }]; me = 0; iAmHost = true; const w = $('sweapon').value === 'none' ? null : $('sweapon').value; // with a weapon, solo practice gets a practice target
+  sim = new VOD.Host(w ? [soloName, 'Target'] : [soloName], $('sfield').value, Object.assign(gameOpts(fresh, w, $('sfield').value), { dummy: !!w })); maybeLaunch(true); }
+$('solo').onclick = () => { soloMode = true; soloName = myName(); startSolo(false); };
+// "New" (solo only): throw the game away and start again with a new random layout and the current settings, for quick tuning
+$('bnew').onclick = () => { clearInterval(loopId); resetGameState(); startSolo(true); };
 function maybeLaunch(force) {
   if (!sim || sim.started) return;
   if (!force && !roster.every((r, i) => i === me || links[r.pid])) return;
-  sim.started = true; $('lobby').style.display = 'none';
+  sim.started = true; $('lobby').style.display = 'none'; $('bnew').style.display = soloMode ? '' : 'none';
   roster.forEach((r, i) => { if (links[r.pid]) links[r.pid].send(sim.init(i)); });
   onHostMsg(sim.init(me));
   let last = performance.now(), lastSnap = 0;
-  setInterval(() => { const n = performance.now(); sim.step((n - last) / 1000); last = n;
+  loopId = setInterval(() => { const n = performance.now(); sim.step((n - last) / 1000); last = n;
     if (n - lastSnap >= 50) { lastSnap = n; const s = sim.snapshot(); roster.forEach((r, i) => links[r.pid] && links[r.pid].send(s)); onHostMsg(s); } }, 16);
 }
 
-// ---------- client: state, input ----------
+</script>
+<script>// ---------- client: state, input ----------
 const clock = { off: null };
 function onHostMsg(m) {
-  if (m.t === 'init') { G = m; return; }
+  if (m.t === 'init') { resetGameState(); G = m; me = m.you; $('lobby').style.display = 'none'; return; }
   if (m.t !== 'snap') return;
   const now = performance.now(), smp = m.ht * 1000 - now; m.at = now; m.tickH = m.ht + m.tin / 1000; // next lock, in host game time
   clock.off = clock.off === null ? smp : clock.off + (smp - clock.off) * .05; // low-pass: arrival-time jitter must not move anything on screen
   snaps.push(m); if (snaps.length > 20) snaps.shift();
-  m.ev.forEach(e => { if (e.e === 'win') over = e.name; else { fx.push(Object.assign({ at: now }, e));
+  m.ev.forEach(e => { sfx(e); if (e.e === 'win') { over = e.name; showResults(e.res || []); } else { fx.push(Object.assign({ at: now }, e));
+    if (e.e === 'nofire' && e.i === me) { toast('Cannot fire: ' + e.why); armed = !!(G && G.targeted); } // stay armed, so another target can be tapped
     if (e.e === 'respawn' && e.i === me) { view.z = Math.min(8, .9 / base()); view.cx = e.x; view.cy = e.y; } } }); // my ship is back: zoom to it
 }
 const latest = () => snaps[snaps.length - 1];
-function accel(x, y, T) { // gravity (px/s^2) at host time T, same formula as the host uses
-  const g = G.grav; if (!g) return [0, 0]; let ax = 0, ay = 0;
-  const add = (bx, by, k) => { const dx = bx - x, dy = by - y, d2 = dx * dx + dy * dy + g.soft * g.soft, f = k / (d2 * Math.sqrt(d2)); ax += dx * f; ay += dy * f; };
-  add(g.c[0], g.c[1], g.planet.k); g.moons.forEach(m => { const a = m.a0 + m.w * T; add(g.c[0] + m.r * Math.cos(a), g.c[1] + m.r * Math.sin(a), m.k); });
-  return [ax, ay];
-}
+const PFC = () => VOD.playfields[G.field].client || {}, WC = () => (G.weapon && VOD.weapons[G.weapon].client) || {}; // the playfield's and the weapon's client hooks
+function accel(x, y, T) { const p = PFC(); return p.accel ? p.accel(G, x, y, T) : [0, 0]; } // gravity (px/s^2) at host time T, same formula as the host uses
 function fly(st, T, dur, pts) { // integrate dur seconds from [x, y, vx, vy] at host time T, optionally collecting the path
   const n = Math.max(1, Math.ceil(dur * 60)), h = dur / n; let [x, y, vx, vy] = st; // 1/60 s steps, same as the host's physics
   for (let i = 0; i < n; i++) { const a = accel(x, y, T + i * h); vx += a[0] * h; vy += a[1] * h; x += vx * h; y += vy * h; if (pts) pts.push([x, y]); }
   return [x, y, vx, vy];
 }
+let armed = false, toastTimer = null; // targeted weapons: Fire arms, tapping a ship fires, Fire again disarms
+function toast(t) { const el = $('toast'); el.textContent = t; el.style.display = 'block'; clearTimeout(toastTimer); toastTimer = setTimeout(() => el.style.display = 'none', 2200); }
+function sendDetonate() { if (iAmHost) sim.detonate(me); else hostConn && hostConn.send({ t: 'detonate' }); }
+function sendFire(target) { if (iAmHost) sim.fire(me, target); else hostConn && hostConn.send({ t: 'fire', target }); }
+function fireWeapon() { // the Fire button or the space bar
+  if (!G || !G.weapon || over) return;
+  const s = snaps.length && latest().ships[me], wc = WC();
+  if (s && wc.canDetonate && wc.canDetonate(latest(), me)) { armed = false; sendDetonate(); return; } // something of mine is in flight: the button detonates it
+  if (!G.targeted) { sendFire(); return; }
+  if (armed) { armed = false; sfx({ e: 'disarm' }); } else if (s && !s.dead && s.cd - (performance.now() - latest().at) / 1000 <= 0) { armed = true; sfx({ e: 'arm' }); }
+}
+function tapTarget(e) { // while armed, a tap on an enemy ship designates it and fires
+  if (!G || snaps.length < 2) return false;
+  const I = interp(performance.now() - 100), wx = (e.clientX - ox) / sc, wy = (e.clientY - oy) / sc, r = Math.max(30, 44 / sc); let best = -1, bd = 1e9;
+  I.ships.forEach((sh, i) => { if (i === me || sh.dead) return; const d = Math.hypot(sh.x - wx, sh.y - wy); if (d < r && d < bd) { bd = d; best = i; } });
+  if (best < 0) return false;
+  armed = false; sendFire(best); return true;
+}
+$('bfire').onclick = fireWeapon;
+addEventListener('keydown', e => { if (e.code === 'Space' && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); fireWeapon(); } });
+const ONE = { v: 1, t: 1 }; // velocity and thrust factors of a playfield's drag (none)
+const FREE = 1; // two planned thrusts: slot 0 is locked (fires at the next tick), slot FREE can still be moved
 function plan() { // my ship's expected route: where each thrust fires (F), where it would be without thrust (C), where it ends up (H)
   const I = interp(performance.now() - 100), s = I.s, mine = I.ships[me], tr = Math.max(0, s.tickH - I.th);
-  const q = s.ships[me].q.map(a => a.slice()); if (local && local.k === s.k) q[2] = [local.x, local.y];
-  let T = I.th, cur = [mine.x, mine.y, mine.vx, mine.vy]; const path = [[mine.x, mine.y]], F = [], C = [], H = []; let at2 = null;
+  const q = s.ships[me].q.map(a => a.slice()); if (local && local.k === s.k && local.zc === s.ships[me].zc) q[FREE] = [local.x, local.y]; // an impact (zc changes) cancels what I had set
+  let T = I.th, cur = [mine.x, mine.y, mine.vx, mine.vy]; const path = [[mine.x, mine.y]], F = [], C = [], H = [], tf = []; let at2 = null;
   cur = fly(cur, T, tr, path); T += tr;
-  for (let i = 0; i < 3; i++) { F.push([cur[0], cur[1]]); C.push(fly(cur, T, G.step).slice(0, 2)); if (i === 2) at2 = { st: cur, T };
-    cur = fly([cur[0], cur[1], cur[2] + q[i][0] / G.step, cur[3] + q[i][1] / G.step], T, G.step, path); T += G.step; H.push([cur[0], cur[1]]); }
-  return { F, C, H, q, path, at2, pw: s.pw[me], k: s.k, tickH: s.tickH };
+  for (let i = 0; i <= FREE; i++) { const dk = PFC().damp ? PFC().damp(G, cur[0], cur[1], T) : ONE; tf[i] = dk.t; if (dk.v !== 1) cur = [cur[0], cur[1], cur[2] * dk.v, cur[3] * dk.v]; // a playfield may slow the ship and weaken the thrust just before each thrust (clouds)
+    F.push([cur[0], cur[1]]); C.push(fly(cur, T, G.step).slice(0, 2)); if (i === FREE) at2 = { st: cur, T };
+    cur = fly([cur[0], cur[1], cur[2] + q[i][0] * tf[i] / G.step, cur[3] + q[i][1] * tf[i] / G.step], T, G.step, path); T += G.step; H.push([cur[0], cur[1]]); }
+  let crash = null, crashStep = null;
+  const blocked = PFC().blocked;
+  if (blocked) for (let i = 0; i < path.length && !crash; i += 3) { const p = path[i]; if (blocked(G, p[0], p[1], 20)) { crash = p; path.length = i + 1; const n0 = Math.max(1, Math.ceil(tr * 60)); crashStep = i <= n0 ? 0 : Math.min(FREE, Math.floor((i - n0 - 1) / Math.ceil(G.step * 60))); } }
+  return { F, C, H, tf, q, path, at2, crash, crashStep, pw: s.pw[me], k: s.k, zc: s.ships[me].zc, tickH: s.tickH };
 }
 function setThird(e) {
   if (!G || !snaps.length || over || latest().ships[me].dead) return;
   const P = plan(), w = [(e.clientX - ox) / sc, (e.clientY - oy) / sc];
-  let x = w[0] - P.C[2][0], y = w[1] - P.C[2][1];
-  const lim = () => { const len = Math.hypot(x, y); if (len > P.pw) { x *= P.pw / len; y *= P.pw / len; } }; lim();
-  for (let it = 0; it < 3 && G.grav; it++) { const a = P.at2.st, e = fly([a[0], a[1], a[2] + x / G.step, a[3] + y / G.step], P.at2.T, G.step); x += w[0] - e[0]; y += w[1] - e[1]; lim(); } // with gravity, aim so the dot lands where you put it
-  local = { k: P.k, x, y };
+  const tf = P.tf[FREE], pe = P.pw * tf; // x, y here are the effective thrust (after the playfield's cut); the host gets the commanded one
+  let x = w[0] - P.C[FREE][0], y = w[1] - P.C[FREE][1];
+  const lim = () => { const len = Math.hypot(x, y); if (len > pe) { x *= pe / len; y *= pe / len; } }; lim();
+  for (let it = 0; it < 3 && PFC().accel; it++) { const a = P.at2.st, e = fly([a[0], a[1], a[2] + x / G.step, a[3] + y / G.step], P.at2.T, G.step); x += w[0] - e[0]; y += w[1] - e[1]; lim(); } // with gravity, aim so the dot lands where you put it
+  x /= tf; y /= tf; local = { k: P.k, zc: P.zc, x, y };
   const n = performance.now(); if (n - lastSend < 40 && e.type === 'pointermove') return; lastSend = n;
   if (iAmHost) sim.setThrust(me, P.k, x, y); else hostConn && hostConn.send({ t: 'thrust', k: P.k, x, y });
 }
-// View: drag on empty space to pan, pinch or wheel to zoom, buttons below. Drag inside the third circle (or its dot) to set the thrust.
+// View: drag on empty space to pan, pinch or wheel to zoom, buttons below. Drag inside the free circle (or its dot) to set the thrust.
 const view = { z: 1, cx: null, cy: null }, ptrs = new Map(); let mode = null, buoyFx = -1e9;
+// Everything a game leaves behind on this page. Called whenever a game starts (and when leaving one), so nothing carries over from the previous game.
+function resetGameState() {
+  G = null; snaps = []; fx = []; local = null; over = null; armed = false; pressed = false; lastSend = 0; buoyFx = -1e9;
+  view.z = 1; view.cx = null; view.cy = null; clock.off = null; ptrs.clear(); mode = null; hideResults();
+}
 const base = () => Math.min(vw() / G.W, vh() / G.H);
 function zoomAt(x, y, f) { const wx = (x - ox) / sc, wy = (y - oy) / sc; view.z = Math.min(6, Math.max(.5, view.z * f)); const s2 = base() * view.z;
   view.cx = wx - (x - vw() / 2) / s2; view.cy = wy - (y - vh() / 2) / s2; }
-function fitRoute() { if (!G || snaps.length < 2) return; const P = plan(), sh = interp(performance.now() - 100).ships[me], pts = [...P.path, P.C[2]], pad = P.pw + 40;
-  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]), x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad, y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
-  view.z = Math.min(6, Math.max(.5, Math.min(vw() / (x1 - x0), vh() / (y1 - y0)) / base())); view.cx = (x0 + x1) / 2; view.cy = (y0 + y1) / 2; }
 function hitThrust(e) { if (!G || snaps.length < 2 || over || latest().ships[me].dead) return false; const P = plan();
-  return Math.hypot(e.clientX - (P.H[2][0] * sc + ox), e.clientY - (P.H[2][1] * sc + oy)) < 70 || Math.hypot(e.clientX - (P.C[2][0] * sc + ox), e.clientY - (P.C[2][1] * sc + oy)) < Math.max(P.pw * sc * 1.3, 80); }
-$('bfit').onclick = () => { view.z = 1; view.cx = G && G.W / 2; view.cy = G && G.H / 2; };
-$('brt').onclick = fitRoute;
-$('bbuoy').onclick = () => { if (!G || snaps.length < 2) return; const sh = interp(performance.now() - 100).ships[me], b = G.buoys.find(b => b[0] === latest().ships[me].n + 1); if (!b) return;
-  const x0 = Math.min(sh.x, b[1]) - 120, x1 = Math.max(sh.x, b[1]) + 120, y0 = Math.min(sh.y, b[2]) - 120, y1 = Math.max(sh.y, b[2]) + 120;
-  view.z = Math.min(8, Math.max(.6 / base(), Math.min(vw() / (x1 - x0), vh() / (y1 - y0)) / base())); // never smaller than 0.6 px per world unit, so the buoy stays clearly visible
-  const s2 = base() * view.z, hw = vw() / s2 / 2 - 60, hh = vh() / s2 / 2 - 60, cl = (v, m) => Math.max(-m, Math.min(m, v));
-  view.cx = b[1] + cl((sh.x - b[1]) / 2, hw); view.cy = b[2] + cl((sh.y - b[2]) / 2, hh); buoyFx = performance.now(); };
-$('bin').onclick = () => zoomAt(vw() / 2, vh() / 2, 1.4); $('bout').onclick = () => zoomAt(vw() / 2, vh() / 2, 1 / 1.4);
+  return Math.hypot(e.clientX - (P.H[FREE][0] * sc + ox), e.clientY - (P.H[FREE][1] * sc + oy)) < 70 || Math.hypot(e.clientX - (P.C[FREE][0] * sc + ox), e.clientY - (P.C[FREE][1] * sc + oy)) < Math.max(P.pw * P.tf[FREE] * sc * 1.3, 80); }
 $('c').addEventListener('wheel', e => { e.preventDefault(); if (G) zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15); }, { passive: false });
-$('c').addEventListener('pointerdown', e => { ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY }); try { $('c').setPointerCapture(e.pointerId); } catch (_) {}
+$('c').addEventListener('pointerdown', e => { if (armed && tapTarget(e)) return; ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY }); try { $('c').setPointerCapture(e.pointerId); } catch (_) {}
   if (ptrs.size === 1) { if (hitThrust(e)) { mode = 'thrust'; setThird(e); } else mode = 'pan'; } else mode = 'pinch'; });
 $('c').addEventListener('pointermove', e => { const o = ptrs.get(e.pointerId); if (!o || !G) return;
   if (mode === 'thrust') { o.x = e.clientX; o.y = e.clientY; setThird(e); }
@@ -11263,16 +12215,16 @@ const endPtr = e => { if (!ptrs.delete(e.pointerId)) return;
   mode = ptrs.size === 1 ? 'pan' : null; };
 addEventListener('pointerup', endPtr); addEventListener('pointercancel', endPtr);
 
-// ---------- rendering ----------
+</script>
+<script>// ---------- rendering ----------
 function interp(rt) { // state at local time rt, placed on the host's game clock; s = the snapshot whose queue and lock time apply at that moment
   const th = (rt + clock.off) / 1000; let a = snaps[0], b = snaps[0];
   for (let i = snaps.length - 1; i >= 0; i--) if (snaps[i].ht <= th) { a = snaps[i]; b = snaps[i + 1] || a; break; }
-  const f = b.ht > a.ht ? Math.min(1, Math.max(0, (th - a.ht) / (b.ht - a.ht))) : 0, L = (u, v) => u + (v - u) * f;
+  const pfc = PFC(), wc = WC(), f = b.ht > a.ht ? Math.min(1, Math.max(0, (th - a.ht) / (b.ht - a.ht))) : 0, L = (u, v) => u + (v - u) * f;
   const ang = (u, v) => { let d = v - u; d -= Math.round(d / (2 * Math.PI)) * 2 * Math.PI; return u + d * f; };
   return { s: th < a.tickH ? a : b, th,
            ships: a.ships.map((s, i) => Object.assign({}, b.ships[i], { x: L(s.x, b.ships[i].x), y: L(s.y, b.ships[i].y), vx: L(s.vx, b.ships[i].vx), vy: L(s.vy, b.ships[i].vy), a: ang(s.a, b.ships[i].a) })),
-           rocks: a.rocks.map((r, i) => [L(r[0], b.rocks[i][0]), L(r[1], b.rocks[i][1]), ang(r[2], b.rocks[i][2])]),
-           moons: (a.moons || []).map((r, i) => [L(r[0], b.moons[i][0]), L(r[1], b.moons[i][1])]) };
+           pf: pfc.interp ? pfc.interp(a.pf, b.pf, L, ang) : {}, w: wc.interp ? wc.interp(a.w, b.w, L, ang) : {} };
 }
 function poly(pts, close) { ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); if (close) ctx.closePath(); }
 function smooth(p) { const n = p.length, m = i => [(p[i][0] + p[(i + 1) % n][0]) / 2, (p[i][1] + p[(i + 1) % n][1]) / 2]; ctx.beginPath(); const s = m(n - 1); ctx.moveTo(s[0], s[1]);
@@ -11287,18 +12239,9 @@ function frame() {
   if (view.cx === null) { view.cx = G.W / 2; view.cy = G.H / 2; }
   sc = Math.min(w / G.W, h / G.H) * view.z; ox = w / 2 - view.cx * sc; oy = h / 2 - view.cy * sc;
   ctx.translate(ox, oy); ctx.scale(sc, sc);
-  const now = performance.now(), I = interp(now - 100), s = latest(); fx = fx.filter(f => now - f.at < (f.e === 'boom' ? 1500 : 700));
+  const now = performance.now(), I = interp(now - 100), s = latest(), pfc = PFC(), wc = WC(); fx = fx.filter(f => now - f.at < (f.e === 'boom' ? 1500 : 700));
   ctx.strokeStyle = 'rgba(255,255,255,.15)'; ctx.lineWidth = 2; ctx.strokeRect(0, 0, G.W, G.H);
-  if (G.grav) { const g = G.grav; ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.1)'; ctx.lineWidth = 1.5 / sc; ctx.setLineDash([6 / sc, 10 / sc]); // orbits, planet, moons
-    g.moons.forEach(m => { circle(g.c[0], g.c[1], m.r); ctx.stroke(); }); ctx.setLineDash([]);
-    const gr = ctx.createRadialGradient(g.c[0] - 25, g.c[1] - 25, 10, g.c[0], g.c[1], g.planet.rad); gr.addColorStop(0, '#6f8fbf'); gr.addColorStop(1, '#0d1a33');
-    ctx.shadowColor = '#7aa6ff'; ctx.shadowBlur = 40; circle(g.c[0], g.c[1], g.planet.rad); ctx.fillStyle = gr; ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(160,190,255,.6)'; ctx.lineWidth = 2; ctx.stroke();
-    I.moons.forEach((m, i) => { circle(m[0], m[1], g.moons[i].rad); ctx.fillStyle = '#556'; ctx.shadowColor = '#aab'; ctx.shadowBlur = 15; ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = '#ccd'; ctx.lineWidth = 2; ctx.stroke();
-      const ex = g.c[0] + .75 * (m[0] - g.c[0]), ey = g.c[1] + .75 * (m[1] - g.c[1]); ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.fillStyle = 'rgba(255,255,255,.45)'; ctx.lineWidth = Math.max(1.5, 1.5 / sc); // pull of planet and moon cancels here
-      circle(ex, ey, 9); ctx.stroke(); circle(ex, ey, 2.5); ctx.fill(); ctx.restore(); }); ctx.restore(); }
-  // rocks
-  G.rocks.forEach((pts, i) => { const r = I.rocks[i]; ctx.save(); ctx.translate(r[0], r[1]); ctx.rotate(r[2]); smooth(pts);
-    ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.shadowColor = 'darkgrey'; ctx.shadowBlur = 20; ctx.fill(); ctx.stroke(); ctx.restore(); });
+  if (pfc.draw) pfc.draw(G, I); // the playfield's background: obstacles, planet, walls
   // buoys
   G.buoys.forEach(b => { const f = fx.find(f => f.e === 'buoy' && f.n === b[0]), k = f ? 1 + .25 * Math.sin((now - f.at) / 700 * Math.PI) : 1;
     ctx.save(); ctx.shadowColor = '#fff'; ctx.shadowBlur = 20; circle(b[1], b[2], 15 * k); ctx.fillStyle = '#000'; ctx.fill(); ctx.restore();
@@ -11308,9 +12251,12 @@ function frame() {
       ctx.globalAlpha = .7 * (1 - pl); circle(nb[1], nb[2], 22 + 14 * pl); ctx.stroke();
       if (t >= 0 && t < 1) for (let k = 0; k < 3; k++) { const ph = ((now - buoyFx) / 1000 + k / 3) % 1; ctx.globalAlpha = (1 - ph) * (1 - t * .5); ctx.lineWidth = 4; circle(nb[1], nb[2], 20 + 80 * ph); ctx.stroke(); }
       ctx.restore(); } }
-  { const a = G.buoys.find(b => b[0] === s.ships[me].n + 1), b2 = G.buoys.find(b => b[0] === s.ships[me].n + 2); // dotted line from the next buoy to the one after, fading out
-    if (a && b2) { const dx = b2[1] - a[1], dy = b2[2] - a[2], d = Math.hypot(dx, dy), gap = 12 / sc; ctx.save(); ctx.fillStyle = G.players[me].color;
-      for (let u = 30; u < d - 30; u += gap) { const t = u / d; ctx.globalAlpha = .6 * (1 - t); circle(a[1] + dx * t, a[2] + dy * t, 2.2 / sc); ctx.fill(); } ctx.restore(); } }
+  { const a = G.buoys.find(b => b[0] === s.ships[me].n + 1), b2 = G.buoys.find(b => b[0] === s.ships[me].n + 2), gap = 12 / sc;
+    // faint dotted guide lines: from my ship to the next buoy, and from the next buoy on to the one after it (fading out)
+    if (a && !s.ships[me].dead) { const sh = I.ships[me], dx = a[1] - sh.x, dy = a[2] - sh.y, d = Math.hypot(dx, dy); ctx.save(); ctx.fillStyle = G.players[me].color; ctx.globalAlpha = .3;
+      for (let u = 45; u < d - 30; u += gap) { circle(sh.x + dx * u / d, sh.y + dy * u / d, 2.2 / sc); ctx.fill(); } ctx.restore(); }
+    if (a && b2) { const dx = b2[1] - a[1], dy = b2[2] - a[2], d = Math.hypot(dx, dy); ctx.save(); ctx.fillStyle = G.players[me].color;
+      for (let u = 30; u < d - 30; u += gap) { const t = u / d; ctx.globalAlpha = .4 * (1 - t); circle(a[1] + dx * t, a[2] + dy * t, 2.2 / sc); ctx.fill(); } ctx.restore(); } }
   { const nb2 = G.buoys.find(b => b[0] === s.ships[me].n + 2); // weaker, slower ping for the buoy after the next
     if (nb2) { const pl = ((now + 700) % 2000) / 2000; ctx.save(); ctx.strokeStyle = G.players[me].color; ctx.lineWidth = 2; ctx.globalAlpha = .3 * (1 - pl); circle(nb2[1], nb2[2], 20 + 10 * pl); ctx.stroke(); ctx.restore(); } }
   // flames
@@ -11329,12 +12275,19 @@ function frame() {
       ctx.strokeStyle = G.players[f.i].color; ctx.lineWidth = 4; circle(f.x, f.y, 20 + 140 * t); ctx.stroke();
       for (let k = 0; k < 16; k++) { const an = k * Math.PI / 8 + (k % 3) * .2, sp = 60 + (k * 37 % 100); circle(f.x + Math.cos(an) * sp * t * 2, f.y + Math.sin(an) * sp * t * 2, 4 * (1 - t) + 1); ctx.fill(); } ctx.restore(); }
     if (f.e === 'respawn' && t < 1) { ctx.save(); ctx.globalAlpha = t; ctx.strokeStyle = G.players[f.i].color; ctx.lineWidth = 4; circle(f.x, f.y, 100 * (1 - t) + 10); ctx.stroke(); ctx.restore(); } });
+  if (wc.fx) fx.forEach(f => wc.fx(f, now)); // the weapon's own effects and projectiles
+  if (wc.draw) wc.draw(G, I, now);
+  if (armed && G.weapon && !s.ships[me].dead) { // aiming: the weapon's range around me, and a ring on every ship that can be tapped
+    const mine = I.ships[me], pulse = 3 * Math.sin(now / 150); ctx.save(); ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1.5, 1.5 / sc);
+    if (G.wrange) { ctx.globalAlpha = .35; ctx.setLineDash([10 / sc, 10 / sc]); circle(mine.x, mine.y, G.wrange); ctx.stroke(); ctx.setLineDash([]); }
+    I.ships.forEach((sh, i) => { if (i === me || sh.dead) return; ctx.globalAlpha = !G.wrange || Math.hypot(sh.x - mine.x, sh.y - mine.y) <= G.wrange ? .95 : .3; circle(sh.x, sh.y, Math.max(32, 24 / sc) + pulse); ctx.stroke(); });
+    ctx.restore(); }
   // my plan
   if (!s.ships[me].dead && !over) {
     const P = plan(), col = G.players[me].color, sh = I.ships[me];
     ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.globalAlpha = 1; poly(P.path); ctx.stroke();
-    P.C.forEach((f, i) => { const tip = P.H[i], open = i === 2;
-      ctx.globalAlpha = open ? .5 : .25; ctx.fillStyle = col; circle(f[0], f[1], P.pw); ctx.fill();
+    P.C.forEach((f, i) => { const tip = P.H[i], open = i === FREE;
+      ctx.globalAlpha = open ? .5 : .25; ctx.fillStyle = P.crashStep !== null && i >= P.crashStep ? '#f33' : col; circle(f[0], f[1], P.pw * P.tf[i]); ctx.fill();
       ctx.globalAlpha = 1; ctx.lineWidth = open ? 3 : 1.5;
       circle(tip[0], tip[1], open ? 14 : 8); open ? ctx.fill() : ctx.stroke();
       if (open) { const left = Math.max(0, (P.tickH - (now + clock.off) / 1000 - .12) / G.step); ctx.beginPath(); ctx.arc(tip[0], tip[1], 24, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * left); ctx.stroke(); } });
@@ -11343,8 +12296,70 @@ function frame() {
 }
 requestAnimationFrame(frame);
 setInterval(() => { if (!G || !snaps.length) return; const s = latest();
-  $('hud').innerHTML = G.players.map((p, i) => `<span style="color:${p.color}">${p.name}${i === me ? ' (you)' : ''}</span>: ${s.ships[i].n}/${G.nb}, hull ${s.ships[i].hp}%${s.ships[i].dead ? ' - DESTROYED, back in ' + Math.ceil(s.ships[i].rs) + 's' : ''}` + (s.pw[i] > 100 ? `, underdog +${Math.round(s.pw[i] - 100)}%` : '')).join('<br>') + (iAmHost ? '<br><small>you are the host: keep this tab visible</small>' : '');
-  const b = $('banner'); if (over) { b.style.display = 'block'; b.textContent = 'Winner: ' + over; } }, 200);
+  $('hud').innerHTML = G.players.map((p, i) => p.dummy ? `<span style="color:${p.color}">${p.name}</span>: practice target, hull ${s.ships[i].hp}%${s.ships[i].dead ? ' - destroyed, back soon' : ''}` : `<span style="color:${p.color}">${p.name}${i === me ? ' (you)' : ''}</span>: ${s.ships[i].n}/${G.nb}, hull ${s.ships[i].hp}%${s.ships[i].dead ? ' - DESTROYED, back in ' + Math.ceil(s.ships[i].rs) + 's' : ''}` + (s.pw[i] > 100 ? `, underdog +${Math.round(s.pw[i] - 100)}%` : '')).join('<br>') + (iAmHost ? '<br><small>you are the host: keep this tab visible</small>' : '') + (PFC().hud ? PFC().hud(G) : '') + (G.weapon ? '<br><small>Weapon: ' + weaponLabel(G.weapon) + '</small>' : '') + '<br><small>' + VERSION + '</small>';
+  const fb = $('bfire'); fb.style.display = G.weapon ? '' : 'none';
+  if (G.weapon) { const cd = Math.max(0, s.ships[me].cd - (performance.now() - s.at) / 1000); fb.disabled = (cd > 0 && !armed && !(WC().canDetonate && WC().canDetonate(s, me))) || s.ships[me].dead || !!over; fb.className = armed ? 'armed' : '';
+    const wc = WC(); fb.textContent = wc.canDetonate && wc.canDetonate(s, me) ? 'Detonate' : armed ? 'Tap a target (tap here to cancel)' : cd > 0 ? weaponLabel(G.weapon) + ' ' + cd.toFixed(1) + ' s' : (G.targeted ? 'Aim ' : ((typeof wc.verb === 'function' ? wc.verb(s, me) : wc.verb) || 'Fire') + ' ') + weaponLabel(G.weapon); }
+  }, 200);
+</script>
+<script>// ---------- sound: every effect is synthesised with Web Audio (no audio files) ----------
+// sfx(e) is called with each host event. Core events are handled below; weapon events by the weapon's client.sound(e, v, T) (v: volume 0..1 by distance, T: { tone, noise }).
+const SND = { ctx: null, master: null, on: true, last: {}, noise: null };
+try { SND.on = localStorage.getItem('vodSound') !== '0'; } catch (_) {}
+function sndInit() { // browsers only allow audio after a tap or key press: called from those events
+  if (SND.ctx) { if (SND.ctx.state === 'suspended') SND.ctx.resume(); return; }
+  const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+  try {
+    const c = SND.ctx = new AC(), comp = c.createDynamicsCompressor(); SND.master = c.createGain(); SND.master.gain.value = .8; SND.master.connect(comp); comp.connect(c.destination);
+    const buf = c.createBuffer(1, c.sampleRate, c.sampleRate), d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; SND.noise = buf;
+  } catch (_) { SND.ctx = null; }
+}
+['pointerdown', 'keydown', 'touchstart'].forEach(t => addEventListener(t, sndInit, { passive: true }));
+function envelope(g, t, vol, dur) { g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(.0002, vol), t + .008); g.gain.exponentialRampToValueAtTime(.0001, t + dur); }
+const T = {
+  tone(f0, f1, dur, type, vol, delay = 0) { // an oscillator gliding from f0 to f1 Hz
+    const c = SND.ctx, t = c.currentTime + delay, o = c.createOscillator(), g = c.createGain(); o.type = type; o.frequency.setValueAtTime(f0, t); if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    envelope(g, t, vol, dur); o.connect(g); g.connect(SND.master); o.start(t); o.stop(t + dur + .03);
+  },
+  noise(dur, kind, f0, f1, vol, delay = 0) { // filtered noise ('lowpass' | 'highpass' | 'bandpass') with the filter sweeping from f0 to f1 Hz
+    const c = SND.ctx, t = c.currentTime + delay, s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain(); s.buffer = SND.noise; s.loop = true; f.type = kind; f.Q.value = kind === 'bandpass' ? 2 : .7;
+    f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + dur); envelope(g, t, vol, dur); s.connect(f); f.connect(g); g.connect(SND.master); s.start(t, Math.random() * .5); s.stop(t + dur + .03);
+  }
+};
+const CORE_SOUNDS = {
+  fire: (e, v) => { const p = .5 + .5 * Math.min(1.2, Math.hypot(e.x, e.y) / 100); T.noise(.5, 'lowpass', 2800, 500, 1.5 * v * p); T.tone(190, 90, .45, 'sawtooth', .22 * v * p); }, // a thrust fires: a rocket whoosh
+  hit: (e, v) => { const k = Math.min(1, (e.d || 10) / 40); T.tone(170, 45, .2, 'sine', (.25 + .5 * k) * v); T.noise(.09, 'lowpass', 2800, 400, .35 * k * v + .08 * v); }, // collision or weapon damage
+  boom: (e, v) => { T.noise(1.2, 'lowpass', 2500, 150, 1.1 * v); T.tone(140, 40, 1, 'sine', .9 * v); T.tone(600, 120, .5, 'sawtooth', .25 * v); T.noise(.15, 'highpass', 5000, 1500, .5 * v); }, // a ship destroyed: crack, then a rumble
+  blast: (e, v) => { T.noise(.7, 'lowpass', 2500, 70, .8 * v); T.tone(110, 30, .6, 'sine', .7 * v); }, // missile or mine explosion
+  respawn: (e, v) => { [330, 440, 660].forEach((f, i) => T.tone(f, f, .2, 'triangle', .4 * v, i * .08)); },
+  buoy: (e, v) => { T.tone(880, 880, .4, 'sine', .3 * v); T.tone(1320, 1320, .55, 'sine', .25 * v, .09); },
+  win: () => { [523, 659, 784, 1047].forEach((f, i) => T.tone(f, f, i === 3 ? 1 : .25, 'triangle', .3, i * .16)); T.tone(262, 262, 1.2, 'sine', .15, .48); }, // the race is over
+  nofire: (e, v) => { T.tone(160, 100, .15, 'square', .2 * v); }, // the weapon would not fire
+  arm: () => { T.tone(660, 880, .07, 'square', .15); }, disarm: () => { T.tone(660, 440, .07, 'square', .15); }
+};
+function sfx(e) {
+  if (!SND.on || !SND.ctx || SND.ctx.state !== 'running' || !G) return;
+  const now = performance.now(); if (now - (SND.last[e.e] || 0) < 40 && e.e !== 'win') return; SND.last[e.e] = now;
+  let v = 1; // louder when it concerns me, fainter with distance otherwise
+  if (e.i !== me && e.e !== 'win' && e.e !== 'arm' && e.e !== 'disarm' && snaps.length) {
+    const s = latest(), mine = s.ships[me], at = e.x != null ? [e.x, e.y] : e.i != null && s.ships[e.i] ? [s.ships[e.i].x, s.ships[e.i].y] : null;
+    v = at ? Math.max(.2, Math.min(1, 1 / (1 + Math.hypot(at[0] - mine.x, at[1] - mine.y) / 500))) * .85 : .4;
+  }
+  if (e.e === 'nofire' && e.i !== me) return;
+  try { if (CORE_SOUNDS[e.e]) CORE_SOUNDS[e.e](e, v); else { const wc = WC(); if (wc.sound) wc.sound(e, v, T); } } catch (_) {}
+}
+const setSndLabel = () => { $('bsnd').textContent = SND.on ? 'Sound' : 'Muted'; };
+$('bsnd').onclick = () => { sndInit(); SND.on = !SND.on; try { localStorage.setItem('vodSound', SND.on ? '1' : '0'); } catch (_) {} setSndLabel(); };
+setSndLabel();
+</script>
+<script>// End of the race: fade to black, then the results (most buoys first) and a Lobby button.
+function showResults(res) {
+  $('rlist').innerHTML = res.map((r, i) => '<li' + (i === 0 ? ' class="win"' : '') + '><span class="rk">' + (i + 1) + '</span><span class="dot" style="background:' + r.color + '"></span><span class="rn">' + esc(r.name) + '</span><span class="tag">' + (i === 0 ? 'winner' : '') + '</span><span class="rb">' + r.n + ' / ' + G.nb + '</span></li>').join('');
+  $('end').classList.add('show'); setTimeout(() => { if (over) $('end').classList.add('results'); }, 1800); // the picture fades out first, then the results appear
+}
+function hideResults() { $('end').classList.remove('show', 'results'); }
+// The Lobby button goes back to the start dialog (solo or online); a new game then starts from scratch.
+$('again').onclick = newGame;
 </script>
 </body>
 </html>
