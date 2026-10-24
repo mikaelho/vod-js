@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Network test v5</title>
+<script>
+(function () { const O = window.RTCPeerConnection; if (!O) return;
+  window.RTCPeerConnection = function (...a) { const pc = new O(...a); if (window.__onpc) window.__onpc(pc); return pc; };
+  window.RTCPeerConnection.prototype = O.prototype; Object.setPrototypeOf(window.RTCPeerConnection, O); })();
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js" onerror="window.peerFail=true"></script>
+<style>
+ body{font:15px/1.45 system-ui,sans-serif;background:#111;color:#ddd;margin:0;padding:12px;padding-top:max(12px,env(safe-area-inset-top))}
+ main{max-width:640px;margin:0 auto}
+ h1{font-size:20px;margin:4px 0}
+ h2{font-size:15px;margin:16px 0 4px;color:#9cf}
+ .row{padding:3px 0;white-space:pre-line}
+ .ok{color:#7d7}.bad{color:#f77}.wait{color:#fc6}.na{color:#999}
+ button,input{font:inherit;padding:6px 10px;margin:3px 3px 3px 0;border-radius:6px;border:1px solid #777;background:#222;color:#eee}
+ input{width:110px}
+ textarea{width:100%;height:170px;background:#000;color:#ccc;border:1px solid #555;font:12px monospace;box-sizing:border-box}
+ small{color:#999}
+</style>
+</head>
+<body>
+<main>
+<h1>Network test <small id="ver">v5</small></h1>
+<small>Checks each layer of online play separately. Do steps 1&ndash;2 in any tab; do step 3 in two tabs or on two devices.</small>
+
+<h2>0. This page</h2>
+<div class="row na" id="s0">checking&hellip;</div>
+
+<h2>1. Networking library (PeerJS)</h2>
+<div class="row wait" id="s1">loading&hellip;</div>
+
+<h2>2. Connection service (introduces the two browsers)</h2>
+<div class="row wait" id="s2">waiting for step 1&hellip;</div>
+
+<h2>2b. Network probe (do the STUN and relay servers answer?)</h2>
+<div class="row wait" id="s2b">probing...</div>
+
+<h2>2c. Loopback (can this browser connect to itself?)</h2>
+<div class="row wait" id="s2c">testing...</div>
+
+<h2>3. Direct connection between two browsers</h2>
+<div>Code: <input id="code" value="test" autocapitalize="none" autocomplete="off">
+<button id="host">Host</button><button id="join">Join</button>
+<br><label><input type="checkbox" id="relay" style="width:auto"> Relay only (forces the relay server)</label><br><label><input type="checkbox" id="alt" style="width:auto"> Also try other public relay servers</label> <button id="again">Run 2b + 2c again</button></div>
+<div class="row na" id="s3">Tab 1: press Host. Tab 2 (or another device): same code, press Join.</div>
+<div class="row na" id="s3b"></div>
+<div class="row na" id="s3c"></div>
+
+<h2>4. Same-browser tabs (no internet needed)</h2>
+<div class="row na" id="s4">checking&hellip;</div>
+
+<h2>5. Message broker route (no direct connection needed)</h2>
+<div class="row wait" id="s5">testing...</div>
+
+<h2>6. Your relay (Cloudflare Worker)</h2>
+<div>Relay address: <input id="relayAddr" placeholder="vod-relay.yourname.workers.dev" style="width:min(100%,330px)"><br>
+Secret: <input id="relayKey" type="password" autocomplete="off" style="width:200px"> <button id="relayBtn">Test relay</button></div>
+<div class="row na" id="s6">enter the relay address and secret (or open this page with ?relay=ADDRESS#key=SECRET), then press Test relay.</div>
+
+<h2>Report</h2>
+<small>Paste this to Claude.</small>
+<textarea id="rep" readonly></textarea>
+</main>
+<script>
+const $ = id => document.getElementById(id), lines = {}, T0 = performance.now(), ms = t => Math.round(performance.now() - t) + ' ms';
+function set(id, cls, text) { const e = $(id); e.className = 'row ' + cls; e.textContent = text; lines[id] = text; $('rep').value = 'Network test ' + $('ver').textContent + '\n' + Object.keys(lines).sort().map(k => 'step ' + k.slice(1) + ': ' + lines[k]).join('\n') + (blocked.length ? '\nBLOCKED by page policy: ' + blocked.join(', ') : ''); }
+const blocked = [];
+document.addEventListener('securitypolicyviolation', e => { blocked.push(e.blockedURI + ' (' + e.violatedDirective + ')'); set('s0', 'bad', $('s0').textContent); });
+
+const ICE = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }]; // the PeerJS defaults
+const ICE_ALT = ICE.concat([{ urls: 'stun:stun.cloudflare.com:3478' }, { urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turns:openrelay.metered.ca:443?transport=tcp'], username: 'openrelayproject', credential: 'openrelayproject' }]);
+const cfg = () => ({ iceServers: $('alt').checked ? ICE_ALT : ICE, iceTransportPolicy: $('relay').checked ? 'relay' : 'all' });
+const kind = c => !c ? '?' : c.candidateType === 'host' ? 'same network' : c.candidateType === 'relay' ? 'RELAY' : 'through NAT';
+async function pairOf(pc) {
+  try {
+    const st = await pc.getStats(), by = {}; let sel = null; st.forEach(r => by[r.id] = r);
+    st.forEach(r => { if (r.type === 'transport' && r.selectedCandidatePairId) sel = by[r.selectedCandidatePairId]; });
+    if (!sel) st.forEach(r => { if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') sel = r; });
+    return sel ? 'local ' + kind(by[sel.localCandidateId]) + ', remote ' + kind(by[sel.remoteCandidateId]) : 'unknown';
+  } catch (e) { return 'unknown'; }
+}
+
+// 0. environment
+set('s0', 'na', location.protocol + '//' + (location.host || '(no host)') + ' | ' + (navigator.onLine ? 'online' : 'OFFLINE') + ' | RTCPeerConnection: ' + (window.RTCPeerConnection ? 'yes' : 'NO') + ' | BroadcastChannel: ' + (window.BroadcastChannel ? 'yes' : 'no') + ' | ' + navigator.userAgent.replace(/^Mozilla\/5.0 /, '').slice(0, 90));
+
+// 1. library
+(function wait(n) {
+  if (window.Peer) { set('s1', 'ok', 'loaded in ' + ms(T0)); testService(); }
+  else if (window.peerFail || n > 80) { set('s1', 'bad', 'NOT loaded (' + (window.peerFail ? 'the request failed or was blocked' : 'no answer in 8 s') + '). Online play cannot work in this page.'); set('s2', 'na', 'skipped'); }
+  else setTimeout(() => wait(n + 1), 100);
+})(0);
+
+// 2. connection service
+function testService() {
+  set('s2', 'wait', 'contacting&hellip;'.replace('&hellip;', '...'));
+  const t = performance.now(); let done = false, p;
+  const finish = (cls, text) => { if (done) return; done = true; set('s2', cls, text); try { p.destroy(); } catch (_) {} };
+  const to = setTimeout(() => finish('bad', 'no answer in 10 s: the connection service is unreachable or blocked.'), 10000);
+  try { p = new Peer(); } catch (e) { clearTimeout(to); finish('bad', 'could not start: ' + e.message); return; }
+  p.on('open', id => { clearTimeout(to); finish('ok', 'reached; got id ' + id.slice(0, 8) + '... in ' + ms(t)); });
+  p.on('error', e => { clearTimeout(to); finish('bad', 'error "' + e.type + '": ' + (e.message || '')); });
+}
+
+// 2b. which kinds of candidate addresses can this browser get? host = local, srflx = via STUN (through the router), relay = via the relay server
+function probe() {
+  if (!window.RTCPeerConnection) return set('s2b', 'bad', 'no RTCPeerConnection');
+  set('s2b', 'wait', 'probing...');
+  const pc = new RTCPeerConnection(cfg()), c = { host: 0, srflx: 0, relay: 0, mdns: 0 }, errs = [], t = performance.now(); let done = false;
+  const finish = () => { if (done) return; done = true; pc.close();
+    set('s2b', c.srflx || c.relay ? 'ok' : 'bad', 'in ' + ms(t) + ': host ' + c.host + (c.mdns ? ' (' + c.mdns + ' hidden behind .local names)' : '') + ', STUN/through-router ' + c.srflx + ', relay ' + c.relay + (c.srflx ? '' : ' [STUN gave nothing]') + (c.relay ? '' : ' [relay gave nothing]') + (errs.length ? ' | errors: ' + errs.slice(0, 3).join('; ') : '')); };
+  pc.createDataChannel('x'); pc.onicecandidateerror = e => errs.push((e.url || '?').replace(/^(stun|turn):/, '$1:') + ' ' + (e.errorCode || '') + ' ' + (e.errorText || ''));
+  pc.onicecandidate = e => { if (!e.candidate) return finish(); const m = / typ (host|srflx|relay)/.exec(e.candidate.candidate); if (m) { c[m[1]]++; if (/ [a-f0-9-]+\.local /.test(e.candidate.candidate)) c.mdns++; } };
+  setTimeout(finish, 8000); pc.createOffer().then(o => pc.setLocalDescription(o));
+}
+// 2c. two connections inside this page, no signaling service involved
+async function loopback() {
+  if (!window.RTCPeerConnection) return set('s2c', 'bad', 'no RTCPeerConnection');
+  set('s2c', 'wait', 'testing...');
+  const a = new RTCPeerConnection(cfg()), b = new RTCPeerConnection(cfg()), t = performance.now(); let done = false;
+  const fin = (cls, txt) => { if (done) return; done = true; set('s2c', cls, txt); a.close(); b.close(); };
+  a.onicecandidate = e => e.candidate && b.addIceCandidate(e.candidate).catch(() => {}); b.onicecandidate = e => e.candidate && a.addIceCandidate(e.candidate).catch(() => {});
+  a.createDataChannel('x').onopen = async () => { const p = await pairOf(a); fin('ok', 'works: connected in ' + ms(t) + ' (' + p + ')'); };
+  setTimeout(() => fin('bad', 'did NOT connect within 10 s (ICE state: ' + a.iceConnectionState + '). This browser or network cannot make direct connections, even to itself.'), 10000);
+  try { const o = await a.createOffer(); await a.setLocalDescription(o); await b.setRemoteDescription(o); const an = await b.createAnswer(); await b.setLocalDescription(an); await a.setRemoteDescription(an); } catch (e) { fin('bad', 'error: ' + e.message); }
+}
+probe(); loopback(); $('again').onclick = () => { probe(); loopback(); };
+
+// live log of the connection steps (attached the moment the browser object is created, so nothing is missed)
+function watchNext(role) {
+  const log = [], cnt = { host: 0, srflx: 0, relay: 0, mdns: 0 }, t = performance.now();
+  const note = x => { log.push(((performance.now() - t) / 1000).toFixed(1) + 's ' + x); set('s3c', 'na', role + ' side, ICE: ' + log.join(' | ')); };
+  window.__onpc = pc => { window.__onpc = null; note('started');
+    pc.addEventListener('iceconnectionstatechange', () => note(pc.iceConnectionState));
+    pc.addEventListener('icecandidate', e => { if (e.candidate) { const m = / typ (host|srflx|relay)/.exec(e.candidate.candidate); if (m) { cnt[m[1]]++; const lo = / [a-f0-9-]+\.local /.test(e.candidate.candidate); if (lo) cnt.mdns++; if (log.length < 16) note('candidate ' + m[1] + (lo ? ' (.local name)' : '')); } } else note('gathered host ' + cnt.host + (cnt.mdns ? ' (' + cnt.mdns + ' as .local names)' : '') + ', STUN ' + cnt.srflx + ', relay ' + cnt.relay); });
+    pc.addEventListener('icecandidateerror', e => note('candidate error ' + (e.errorCode || '') + ' ' + (e.url || ''))); };
+}
+
+// 3. direct connection: host answers pings, joiner measures round trips and reports how the connection was made
+const pathType = conn => pairOf(conn.peerConnection);
+let peer = null;
+const code = () => 'vodjs-nettest-' + ($('code').value.toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'test');
+$('host').onclick = () => {
+  if (!window.Peer) return set('s3', 'bad', 'library not loaded (step 1)');
+  if (peer) try { peer.destroy(); } catch (_) {}
+  set('s3', 'wait', 'starting host...'); set('s3b', 'na', '');
+  watchNext('host'); peer = new Peer(code(), { config: cfg() });
+  peer.on('open', () => set('s3', 'ok', 'Hosting. Waiting for the other tab to press Join with code "' + $('code').value + '".'));
+  peer.on('error', e => set('s3', 'bad', 'host error "' + e.type + '"' + (e.type === 'unavailable-id' ? ': that code is in use, pick another or wait a minute' : '')));
+  peer.on('connection', c => {
+    c.on('open', async () => { set('s3', 'ok', 'Someone connected.'); set('s3b', 'ok', 'Path: ' + await pathType(c)); });
+    c.on('data', m => { if (m && m.t === 'ping') c.send({ t: 'pong', n: m.n, ts: m.ts }); });
+  });
+};
+$('join').onclick = () => {
+  if (!window.Peer) return set('s3', 'bad', 'library not loaded (step 1)');
+  if (peer) try { peer.destroy(); } catch (_) {}
+  set('s3', 'wait', 'contacting the connection service...'); set('s3b', 'na', '');
+  const t0 = performance.now(); watchNext('join'); peer = new Peer(undefined, { config: cfg() }); let conn, rtts = [];
+  const giveUp = setTimeout(() => set('s3', 'bad', 'could not connect within 15 s (host not running, wrong code, or a firewall blocks direct connections)'), 15000);
+  peer.on('error', e => { clearTimeout(giveUp); set('s3', 'bad', 'error "' + e.type + '"' + (e.type === 'peer-unavailable' ? ': no host with that code; press Host in the other tab first' : '')); });
+  peer.on('open', () => {
+    set('s3', 'wait', 'looking for the host...');
+    conn = peer.connect(code(), { reliable: true });
+    conn.on('open', async () => {
+      clearTimeout(giveUp); set('s3', 'wait', 'connected in ' + ms(t0) + '; measuring...');
+      conn.on('data', m => { if (m && m.t === 'pong') { rtts.push(performance.now() - m.ts); if (rtts.length < 8) conn.send({ t: 'ping', n: rtts.length, ts: performance.now() }); else done(); } });
+      conn.send({ t: 'ping', n: 0, ts: performance.now() });
+    });
+  });
+  async function done() { const s = rtts.slice(1).sort((a, b) => a - b); set('s3', 'ok', 'CONNECTED. Round trip median ' + Math.round(s[s.length >> 1]) + ' ms (min ' + Math.round(s[0]) + ', max ' + Math.round(s[s.length - 1]) + ')'); set('s3b', 'ok', 'Path: ' + await pathType(conn)); }
+};
+
+// 5. public MQTT brokers over WebSocket: a plain outgoing connection, so no NAT or direct-connection problems. Minimal MQTT 3.1.1 client (QoS 0).
+const qb = new URLSearchParams(location.search).get('broker');
+const BROKERS = (qb ? [qb] : []).concat(['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081']);
+function mqttOpen(url, timeout = 7000) {
+  return new Promise((res, rej) => {
+    const t = performance.now(), enc = new TextEncoder(), dec = new TextDecoder(); let ws, buf = new Uint8Array(0), ok = false;
+    try { ws = new WebSocket(url, 'mqtt'); } catch (e) { return rej(new Error('cannot open: ' + e.message)); }
+    ws.binaryType = 'arraybuffer'; const c = { ws };
+    const to = setTimeout(() => { try { ws.close(); } catch (_) {} rej(new Error('no answer in ' + timeout / 1000 + ' s')); }, timeout);
+    const cat = (...a) => { const o = new Uint8Array(a.reduce((x, y) => x + y.length, 0)); let p = 0; a.forEach(y => { o.set(y, p); p += y.length; }); return o; };
+    const str = x => { const b = enc.encode(x); return cat(new Uint8Array([b.length >> 8, b.length & 255]), b); };
+    const pk = (h, body) => { const r = []; let n = body.length; do { let b = n % 128; n = Math.floor(n / 128); if (n) b |= 128; r.push(b); } while (n); return cat(new Uint8Array([h, ...r]), body); };
+    c.sub = topic => ws.send(pk(0x82, cat(new Uint8Array([0, 1]), str(topic), new Uint8Array([0]))));
+    c.pub = (topic, text) => ws.send(pk(0x30, cat(str(topic), enc.encode(text))));
+    c.close = () => { try { ws.close(); } catch (_) {} };
+    ws.onopen = () => ws.send(pk(0x10, cat(str('MQTT'), new Uint8Array([4, 2, 0, 60]), str('nt' + Math.random().toString(36).slice(2, 10)))));
+    ws.onerror = () => { clearTimeout(to); rej(new Error('connection failed or blocked')); };
+    ws.onclose = () => { if (!ok) { clearTimeout(to); rej(new Error('closed before connecting')); } };
+    ws.onmessage = e => {
+      const d = new Uint8Array(e.data), nb = new Uint8Array(buf.length + d.length); nb.set(buf); nb.set(d, buf.length); buf = nb;
+      while (buf.length >= 2) {
+        let mult = 1, len = 0, i = 1, b; do { if (i >= buf.length) return; b = buf[i++]; len += (b & 127) * mult; mult *= 128; } while (b & 128);
+        if (buf.length < i + len) return;
+        const first = buf[0], type = first >> 4, body = buf.slice(i, i + len); buf = buf.slice(i + len);
+        if (type === 2) { if (body[1] === 0) { ok = true; clearTimeout(to); c.connectMs = performance.now() - t; res(c); } else { clearTimeout(to); rej(new Error('refused, code ' + body[1])); } }
+        else if (type === 3 && c.onmsg) { const tl = body[0] << 8 | body[1]; let p = 2 + tl; if ((first >> 1) & 3) p += 2; c.onmsg(dec.decode(body.slice(2, 2 + tl)), dec.decode(body.slice(p))); }
+      }
+    };
+  });
+}
+async function brokerTest() {
+  const out = []; set('s5', 'wait', 'testing...');
+  for (const url of BROKERS) {
+    const name = url.replace(/^wss?:\/\//, '');
+    try {
+      const c = await mqttOpen(url), topic = 'vodjs/nettest/' + Math.random().toString(36).slice(2, 10), rtts = [];
+      await new Promise(res => { c.onmsg = (tp, txt) => { rtts.push(performance.now() - +txt); if (rtts.length < 8) c.pub(topic, String(performance.now())); else res(); }; c.sub(topic); setTimeout(() => c.pub(topic, String(performance.now())), 300); setTimeout(res, 6000); });
+      c.close(); const q = rtts.slice(1).sort((a, b) => a - b);
+      out.push((q.length ? 'OK ' : 'connected, but no echo ') + name + ': connect ' + Math.round(c.connectMs) + ' ms' + (q.length ? ', round trip via broker median ' + Math.round(q[q.length >> 1]) + ' ms' : ''));
+    } catch (e) { out.push('FAILED ' + name + ': ' + e.message); }
+    set('s5', out.some(l => l.startsWith('OK')) ? 'ok' : 'wait', out.join('\n'));
+  }
+  set('s5', out.some(l => l.startsWith('OK')) ? 'ok' : 'bad', out.join('\n'));
+}
+brokerTest();
+
+// 6. your relay: two connections from this page to the relay (as two players), messages sent across and timed. The secret is never shown or put in the report.
+const qp = new URLSearchParams(location.search), hp = new URLSearchParams(location.hash.slice(1));
+$('relayAddr').value = qp.get('relay') || ''; $('relayKey').value = hp.get('key') || qp.get('key') || '';
+const b64url = x => btoa(String.fromCharCode(...new TextEncoder().encode(x))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); // any secret fits in a WebSocket subprotocol this way
+const relayBase = a => { a = a.trim().replace(/\/+$/, ''); if (!a) return ''; if (/^https:/.test(a)) return a.replace(/^https:/, 'wss:'); if (/^http:/.test(a)) return a.replace(/^http:/, 'ws:'); if (/^wss?:/.test(a)) return a; return 'wss://' + a; };
+async function relayTest() {
+  const base = relayBase($('relayAddr').value), key = $('relayKey').value.trim(), name = base.replace(/^wss?:\/\//, '');
+  if (!base) return set('s6', 'na', 'not configured: enter the relay address and secret above, then press Test relay.');
+  if (!key) return set('s6', 'bad', 'the secret is empty.');
+  set('s6', 'wait', 'testing ' + name + '...');
+  const room = 'nettest' + Math.random().toString(36).slice(2, 7);
+  const open = id => new Promise((res, rej) => {
+    const t = performance.now(); let ws, up = false;
+    try { ws = new WebSocket(base + '/' + room, ['vodjs-relay', 'k.' + b64url(key)]); } catch (e) { return rej(new Error('bad address (' + e.message + ')')); }
+    const to = setTimeout(() => { try { ws.close(); } catch (_) {} rej(new Error('no answer within 8 s')); }, 8000);
+    ws.onopen = () => ws.send(JSON.stringify({ t: 'hi', id }));
+    ws.onmessage = e => { const m = JSON.parse(e.data); if (m.t === 'ok') { up = true; clearTimeout(to); ws.ms = performance.now() - t; res(ws); } else if (m.t === 'err') { clearTimeout(to); rej(new Error('the relay answered: ' + m.type)); } else if (ws.onrelay) ws.onrelay(m); };
+    ws.onclose = () => { if (!up) { clearTimeout(to); rej(new Error('the connection was refused or lost')); } };
+  });
+  try {
+    const A = await open('ta'), B = await open('tb'), rtts = [];
+    await new Promise(res => {
+      B.onrelay = m => { if (m.t === 'from') B.send(JSON.stringify({ t: 'to', to: m.from, d: m.d })); };
+      const ping = () => A.send(JSON.stringify({ t: 'to', to: 'tb', d: String(performance.now()) }));
+      A.onrelay = m => { if (m.t === 'from') { rtts.push(performance.now() - +m.d); if (rtts.length < 9) ping(); else res(); } else if (m.t === 'err') res(); };
+      ping(); setTimeout(res, 6000);
+    });
+    A.close(); B.close(); const q = rtts.slice(1).sort((a, b) => a - b);
+    set('s6', q.length ? 'ok' : 'bad', q.length ? 'WORKS: ' + name + ' | connect ' + Math.round(A.ms) + ' ms | message A to B and back: median ' + Math.round(q[q.length >> 1]) + ' ms (min ' + Math.round(q[0]) + ', max ' + Math.round(q[q.length - 1]) + ')' : 'connected, but messages did not come back');
+  } catch (e) {
+    let hint = '';
+    try { await fetch(base.replace(/^ws/, 'http'), { mode: 'no-cors', cache: 'no-store' }); hint = ' The relay address is reachable, so the secret is probably wrong (or the relay is not the VoD one).'; } catch (_) { hint = ' The relay address itself is not reachable: check the spelling and that the Worker is deployed.'; }
+    set('s6', 'bad', 'FAILED (' + name + '): ' + e.message + '.' + hint);
+  }
+}
+$('relayBtn').onclick = relayTest; if (qp.get('relay')) relayTest();
+
+// 4. same-browser tabs
+(function () {
+  if (!window.BroadcastChannel) return set('s4', 'na', 'not supported in this browser');
+  const bc = new BroadcastChannel('vodjs-nettest'), me = Math.random().toString(36).slice(2), seen = new Set();
+  bc.onmessage = e => { if (e.data.from !== me) { if (!seen.has(e.data.from)) { seen.add(e.data.from); bc.postMessage({ from: me }); } set('s4', 'ok', 'works: heard ' + seen.size + ' other tab(s) of this page'); } };
+  set('s4', 'na', 'open this page in a second tab of the same browser; this line turns green when the tabs hear each other.');
+  bc.postMessage({ from: me });
+})();
+</script>
+</body>
+</html>

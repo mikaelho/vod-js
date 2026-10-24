@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>VoD</title>
+<style>
+ :root{--ac:#cfd4da;--ac2:#eef0f2;--line:#3b4048;--mut:#8f969f;--card:rgba(255,255,255,.045)}
+ html,body{margin:0;height:100%;overflow:hidden;background:#000 url(assets/spacetile2.png);color:#fff;font-family:Optima,Helvetica,sans-serif;touch-action:none}
+ canvas{position:fixed;inset:0;width:100%;height:100%}
+ #hud{position:absolute;top:8px;left:10px;font-size:15px;line-height:1.5;pointer-events:none;text-shadow:0 0 4px #000}
+ #vb button{font:inherit;padding:8px 12px;border-radius:6px;border:1px solid var(--ac);background:rgba(207,212,218,.08);color:var(--ac);cursor:pointer}
+ /* start dialog */
+ #lobby{position:absolute;inset:0;background:rgba(0,0,0,.84);display:flex;align-items:center;justify-content:center;overflow:auto}
+ #box{width:min(720px,94vw);padding:18px 0;box-sizing:border-box}
+ h1{margin:0 0 16px;font-size:30px;font-weight:600;letter-spacing:.04em}
+ h1 small{font-size:12px;color:var(--mut);font-weight:400;letter-spacing:0;margin-left:6px}
+ h2{margin:0;font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--ac)}
+ .fl{display:flex;flex-direction:column;gap:5px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+ input,select{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:#06070a;color:#fff;font:inherit;font-size:15px;letter-spacing:normal;text-transform:none}
+ input:focus,select:focus{outline:none;border-color:var(--ac)}
+ select:disabled{opacity:.4;border-style:dashed}
+ #code{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.06em}
+ .btn{font:inherit;font-weight:600;padding:11px 14px;border-radius:8px;border:1px solid var(--ac);background:var(--ac);color:#0e1013;cursor:pointer}
+ .chk{display:flex;align-items:center;gap:8px;font-size:15px;color:#fff;letter-spacing:normal;text-transform:none;min-height:42px} .chk input{width:auto} .chk.dim{color:var(--mut);font-style:italic}
+ #vb #bfire{font-weight:600;background:var(--ac);color:#0e1013} #vb #bfire:disabled{opacity:.45;cursor:default}
+ #vb #bfire.armed{background:rgba(255,255,255,.12);color:#fff;box-shadow:0 0 0 2px var(--ac) inset}
+ #toast{position:fixed;left:50%;bottom:calc(72px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:8px 14px;border-radius:8px;font-size:14px;display:none;z-index:4;pointer-events:none}
+ .badges{display:flex;gap:8px;flex-wrap:wrap}
+ .btn:hover{background:var(--ac2)} .btn.sec{background:transparent;color:var(--ac)} .btn.sec:hover{background:rgba(207,212,218,.12)}
+ #grid{display:grid;grid-template-columns:3fr 2fr;gap:14px;margin-top:14px}
+ section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:14px}
+ #hj{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto auto auto auto;column-gap:12px;row-gap:8px}
+ .ch{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ac);padding-bottom:2px;border-bottom:1px solid var(--line)}
+ #solo-s .btn{margin-top:auto}
+ #msg{margin-top:14px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-size:14px;line-height:1.45;color:#d5d9de}
+ #msg .note{color:var(--mut);font-size:12px} #msg .main{margin-top:3px} #msg.err{border-color:#a66;color:#ffc4c4}
+ #panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:14px}
+ .phead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+ .gid{font:600 30px ui-monospace,Menlo,Consolas,monospace;letter-spacing:.08em;line-height:1.1;margin-top:4px}
+ .badge{font-size:11px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);border-radius:999px;padding:5px 11px;color:var(--ac)}
+ #plist{list-style:none;margin:16px 0 12px;padding:0;display:grid;gap:6px}
+ #plist li{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,.05)}
+ .dot{width:12px;height:12px;border-radius:50%;flex:none} .tag{margin-left:auto;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+ #pnote{color:var(--mut);font-size:14px;margin:0 0 14px} #pnote.wait::after{content:'';animation:dots 1.4s steps(1,end) infinite}
+ @keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+ .prow{display:flex;gap:10px} .prow .btn{flex:1}
+ /* end of the race */
+ #end{position:fixed;inset:0;z-index:5;background:#000;opacity:0;pointer-events:none;transition:opacity 1.6s ease;display:flex;align-items:center;justify-content:center}
+ #end.show{opacity:1;pointer-events:auto}
+ #endbox{width:min(460px,92vw);opacity:0;transition:opacity 1s ease}
+ #end.results #endbox{opacity:1}
+ #endbox h2{font-size:13px;margin-bottom:14px}
+ #rlist{list-style:none;margin:0 0 18px;padding:0;display:grid;gap:6px}
+ #rlist li{display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:8px;background:rgba(255,255,255,.05)}
+ #rlist li.win{background:rgba(207,212,218,.14);border:1px solid var(--ac)}
+ #rlist .rk{width:18px;color:var(--mut)} #rlist .rn{font-size:17px} #rlist .rb{font-variant-numeric:tabular-nums;color:var(--ac)} #rlist .tag{margin-left:auto}
+ #endbox .btn{width:100%}
+ @media (max-width:640px){#grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="toast"></div>
+<div id="end"><div id="endbox"><h2>Race finished</h2><ol id="rlist"></ol><button class="btn" id="again">Lobby</button></div></div>
+<div id="vb" style="position:absolute;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;gap:4px"><button id="bfire" style="display:none">Fire</button><button id="bsnd">Sound</button><button id="bnew" style="display:none">New</button></div>
+<div id="err" style="position:absolute;bottom:0;left:0;right:0;background:#400;color:#fcc;font:12px monospace;padding:4px;display:none;white-space:pre-wrap"></div>
+<div id="lobby"><div id="box">
+ <h1>VoD <small id="ver"></small></h1>
+ <label class="fl">Your name<input id="name" placeholder="Your name" maxlength="14" autocomplete="off"></label>
+ <div id="setup">
+  <div id="grid">
+   <section id="online">
+    <h2>Online game</h2>
+    <label class="fl">Game ID<input id="code" value="a" placeholder="Game ID" maxlength="20" autocapitalize="none" autocomplete="off" spellcheck="false"></label>
+    <div id="hj">
+     <div class="ch">Host</div><div class="ch">Join</div>
+     <label class="fl">Playfield<select id="field"></select></label>
+     <label class="fl">Playfield<select disabled><option>Set by the host</option></select></label>
+     <label class="fl">Options<span class="chk"><input type="checkbox" id="weaponsOn"> Weapons</span></label>
+     <label class="fl">Options<span class="chk dim">Set by the host</span></label>
+     <button class="btn" id="create">Host game</button><button class="btn" id="join">Join game</button>
+    </div>
+   </section>
+   <section id="solo-s">
+    <h2>Solo practice</h2>
+    <label class="fl">Playfield<select id="sfield"></select></label>
+    <label class="fl">Weapon<select id="sweapon"></select></label>
+    <button class="btn sec" id="solo">Start practice</button>
+   </section>
+  </div>
+ </div>
+ <div id="panel" style="display:none">
+  <div class="phead"><div><div class="fl">Game ID</div><div class="gid" id="pgid"></div></div><div class="badges"><span class="badge" id="pfield"></span><span class="badge" id="pwbadge" style="display:none"></span></div></div>
+  <label class="fl" id="pweaprow" style="display:none;margin-top:14px">Weapon<select id="pweapon"></select></label>
+  <ul id="plist"></ul>
+  <p id="pnote"></p>
+  <div class="prow"><button class="btn" id="start" style="display:none">Start game</button><button class="btn sec" id="leave">Leave</button></div>
+ </div>
+ <div id="msg" style="display:none"></div>
+</div></div>
+<!--SCRIPTS-->
+</body>
+</html>
