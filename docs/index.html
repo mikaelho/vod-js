@@ -11115,6 +11115,41 @@ Host.prototype.fire = function (i, target) {
 };
 Host.prototype.detonate = function (i) { return !!(this.wh.detonate && this.wh.detonate(this, i)); }; // weapons with something in flight (missile, mine)
 
+// Final results: most buoys first; a tie goes to whoever reached their last buoy earlier.
+Host.prototype.standings = function () {
+  return this.ships.map(function (s) { return { name: s.name, color: s.color, n: s.visited, t: s.lastAt || 0 }; })
+    .sort(function (a, b) { return b.n - a.n || a.t - b.t; });
+};
+
+// ---- weapons ----
+Host.prototype.fire = function (i) { // the pilot pressed Fire; false when nothing happened (no weapon, cooling down, no target)
+  var sh = this.ships[i];
+  if (!sh || !this.weapon || this.over || sh.dead || this.time < (sh.readyAt || 0)) return false;
+  if (this.weapon === 'gun') return this.shootGun(sh);
+  return false; // the other weapons are not built yet
+};
+Host.prototype.damage = function (t, d) { // weapon damage; wrecks and freshly respawned ships are immune
+  if (t.dead || this.time < t.inv) return;
+  t.hp = Math.max(0, t.hp - d); this.events.push({ e: 'hit', i: t.i, d: Math.round(d) });
+  if (t.hp === 0) { t.dead = true; t.dying = true; }
+};
+Host.prototype.shootGun = function (sh) { // hits the nearest enemy within range that has a clear line of sight
+  var V = this.V, p = sh.body.GetPosition(), x = p.x * S, y = p.y * S, world = this.world;
+  var cands = this.ships.filter(function (o) { return o !== sh && !o.dead; }).map(function (o) { var q = o.body.GetPosition(); return { o: o, d: Math.hypot(q.x * S - x, q.y * S - y) }; })
+    .filter(function (c) { return c.d <= GUN.range; }).sort(function (a, b) { return a.d - b.d; });
+  for (var k = 0; k < cands.length; k++) {
+    var t = cands[k].o, q = t.body.GetPosition(), best = null;
+    world.RayCast(function (fix, pt, nrm, fr) { if (fix.IsSensor() || fix.GetBody() === sh.body) return 1; if (!best || fr < best.fr) best = { fix: fix, pt: pt, fr: fr }; return fr; }, new V(p.x, p.y), new V(q.x, q.y));
+    if (best && best.fix.GetBody() === t.body) {
+      var dx = q.x * S - x, dy = q.y * S - y, len = Math.hypot(dx, dy) || 1;
+      this.damage(t, GUN.dmg); t.body.ApplyImpulse(new V(dx / len * .15, dy / len * .15), t.body.GetWorldCenter()); // a small shove
+      this.events.push({ e: 'shot', i: sh.i, x1: Math.round(x), y1: Math.round(y), x2: Math.round(best.pt.x * S), y2: Math.round(best.pt.y * S), hit: true });
+      sh.readyAt = this.time + GUN.cd; return true;
+    }
+  }
+  return false;
+};
+
 Host.prototype.contact = function (sh, o) {
   if (this.over || o.projectile) return; // a projectile's damage comes from its own hit() handler
   if (o.kind === 'buoy') {
