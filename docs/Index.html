@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>VoD v43</title>
+<title>VoD v44</title>
 <style>
  :root{--ac:#cfd4da;--ac2:#eef0f2;--line:#3b4048;--mut:#8f969f;--card:rgba(255,255,255,.045)}
  html,body{margin:0;height:100%;overflow:hidden;background:#000 url(assets/spacetile2.png);color:#fff;font-family:Optima,Helvetica,sans-serif;touch-action:none}
@@ -12027,7 +12027,7 @@ VOD.weapon('missile', {
 })();
 </script>
 <script>// Bump this on every update; build.py shows it in the page title, the dialog and the in-game sidebar.
-const VERSION = 'v43';
+const VERSION = 'v44';
 </script>
 <script>// Connection layer. Three interchangeable transports with the small PeerJS-like interface the lobby uses:
 //   new T(id)  .id  .on('open' | 'error' | 'connection' | 'disconnected')  .connect(id) -> conn  .destroy()
@@ -12073,6 +12073,7 @@ function relayConfig() {
   const base = /^https:/.test(a) ? a.replace(/^https:/, 'wss:') : /^http:/.test(a) ? a.replace(/^http:/, 'ws:') : /^wss?:/.test(a) ? a : 'wss://' + a;
   return { base, key, host: base.replace(/^wss?:\/\//, '') };
 }
+const GIVE_UP = 90000; // ms of trying to get the relay back before the page says the connection is lost
 class RelayConn {
   constructor(p, remote, cid) { this.p = p; this.peer = remote; this.cid = cid; this.h = {}; }
   on(e, f) { (this.h[e] = this.h[e] || []).push(f); return this; }
@@ -12081,37 +12082,73 @@ class RelayConn {
   close() {}
 }
 class RelayPeer {
+  // Resilient: the WebSocket is opened again whenever it drops (same peer id, so the logical connections carry on), with backoff; messages sent
+  // meanwhile wait in a queue (snapshots are not queued: they would be stale); a silent socket is detected by missing replies to the pings.
+  // Events: 'open' (first registration), 'reconnecting', 'reconnected', 'disconnected' (gave up after GIVE_UP ms), 'error'.
   constructor(id, cfg) { // cfg: { base, key, room }
-    this.h = {}; this.conns = {}; this.up = false; this.failed = false; this.id = id || 'r' + Math.random().toString(36).slice(2, 9);
-    this.ws = new WebSocket(cfg.base + '/' + cfg.room, ['vodjs-relay', 'k.' + b64url(cfg.key)]);
-    this.ws.onopen = () => this.ws.send(JSON.stringify({ t: 'hi', id: this.id }));
-    this.ws.onmessage = e => { let m; try { m = JSON.parse(e.data); } catch (_) { return; } this.recv(m); };
-    this.ws.onclose = () => { clearInterval(this.ka); if (this.up) this.emit('disconnected'); else if (!this.failed) this.emit('error', { type: 'relay-refused' }); };
-    this.ka = setInterval(() => { if (this.ws.readyState === 1) this.ws.send('{"t":"ping"}'); }, 25000);
+    this.h = {}; this.conns = {}; this.up = false; this.everUp = false; this.failed = false; this.closed = false; this.cfg = cfg; this.q = []; this.tries = 0; this.lostAt = 0; this.lastRx = Date.now(); this.flagged = false;
+    this.id = id || 'r' + Math.random().toString(36).slice(2, 9);
+    this.open();
+    this.ka = setInterval(() => this.watch(), 4000);
+    this.wake = () => { if (!this.up && !this.closed && !this.failed && (!this.ws || this.ws.readyState > 1 || this.wait)) { clearTimeout(this.rt); this.wait = false; this.open(); } };
+    addEventListener('online', this.wake); document.addEventListener('visibilitychange', this.wake);
   }
   on(e, f) { (this.h[e] = this.h[e] || []).push(f); return this; }
   emit(e, ...a) { (this.h[e] || []).slice().forEach(f => f(...a)); }
+  open() {
+    if (this.closed || this.failed) return; this.wait = false; let ws;
+    try { ws = this.ws = new WebSocket(this.cfg.base + '/' + this.cfg.room, ['vodjs-relay', 'k.' + b64url(this.cfg.key)]); } catch (_) { this.lost(); return; }
+    clearTimeout(this.at); this.at = setTimeout(() => { if (this.ws === ws && !this.up) { ws.onclose = null; try { ws.close(); } catch (_) {} this.lost(); } }, 6000); // an attempt that never registers is dropped and retried
+    ws.onopen = () => { try { ws.send(JSON.stringify({ t: 'hi', id: this.id })); } catch (_) {} };
+    ws.onmessage = e => { this.lastRx = Date.now(); let m; try { m = JSON.parse(e.data); } catch (_) { return; } this.recv(m); };
+    ws.onclose = () => { if (this.ws === ws) this.lost(); };
+  }
+  lost() { // the socket closed, or never worked: try again unless we are out of patience
+    clearTimeout(this.at); if (this.closed || this.failed) return;
+    const was = this.up; this.up = false; this.tries++;
+    if (!this.everUp) { if (this.tries >= 3) { this.failed = true; this.emit('error', { type: 'relay-refused' }); return; } }
+    else { if (!this.lostAt) this.lostAt = Date.now(); if (!this.flagged) { this.flagged = true; this.emit('reconnecting'); }
+      if (Date.now() - this.lostAt > GIVE_UP) { this.failed = true; this.emit('disconnected'); return; } }
+    const delay = Math.min(5000, 400 * Math.pow(2, Math.min(this.tries - 1, 4))); this.wait = true; clearTimeout(this.rt); this.rt = setTimeout(() => this.open(), delay);
+  }
+  watch() { // every 4 s: ping, and treat a relay that has been silent for 20 s as gone
+    if (!this.up || this.closed) return;
+    if (Date.now() - this.lastRx > 20000) { const ws = this.ws; ws.onclose = null; try { ws.close(); } catch (_) {} this.lost(); return; }
+    if (this.ws.readyState === 1) { try { this.ws.send('{"t":"ping"}'); } catch (_) {} }
+  }
   recv(m) {
-    if (m.t === 'ok') { this.up = true; this.emit('open', this.id); }
-    else if (m.t === 'err') { if (m.type !== 'peer-unavailable') this.failed = true; this.emit('error', { type: m.type }); }
+    if (m.t === 'ok') { const again = this.everUp; this.up = true; this.everUp = true; this.tries = 0; this.lostAt = 0; clearTimeout(this.at);
+      if (again) { this.flagged = false; this.flush(); this.emit('reconnected'); } else this.emit('open', this.id); }
+    else if (m.t === 'err') {
+      if (m.type === 'peer-unavailable') { const c = Object.values(this.conns).find(c => c.timer && c.peer === m.to); if (c) { clearTimeout(c.timer); c.timer = null; this.emit('error', { type: 'peer-unavailable' }); } } // only matters while connecting to someone
+      else if (m.type === 'unavailable-id' && (this.everUp || this.tries > 0)) { const ws = this.ws; ws.onclose = null; try { ws.close(); } catch (_) {} this.lost(); } // our own earlier socket is probably still registered on the relay: try again shortly
+      else { this.failed = true; this.emit('error', { type: m.type }); } }
     else if (m.t === 'from') this.inner(m.from, m.d);
   }
   inner(from, d) {
     if (!d) return;
-    if (d.t === 'connect') { const c = new RelayConn(this, from, d.cid); this.conns[d.cid] = c; this.send(from, { t: 'accept', cid: d.cid }); this.emit('connection', c); setTimeout(() => c.emit('open'), 0); }
-    else if (d.t === 'accept' && this.conns[d.cid]) { clearTimeout(this.conns[d.cid].timer); setTimeout(() => this.conns[d.cid].emit('open'), 0); }
+    if (d.t === 'connect') { let c = this.conns[d.cid]; const fresh = !c; if (fresh) { c = this.conns[d.cid] = new RelayConn(this, from, d.cid); } this.send(from, { t: 'accept', cid: d.cid }); if (fresh) { this.emit('connection', c); setTimeout(() => c.emit('open'), 0); } } // a repeated connect (a retry) is answered again but not announced twice
+    else if (d.t === 'accept' && this.conns[d.cid]) { const c = this.conns[d.cid]; clearTimeout(c.timer); c.timer = null; if (!c.opened) { c.opened = true; setTimeout(() => c.emit('open'), 0); } }
     else if (d.t === 'data' && this.conns[d.cid]) this.conns[d.cid].emit('data', d.d);
   }
-  send(to, d) { if (this.ws.readyState === 1) this.ws.send(JSON.stringify({ t: 'to', to, d })); }
-  connect(to) { const cid = Math.random().toString(36).slice(2), c = new RelayConn(this, to, cid); this.conns[cid] = c; c.timer = setTimeout(() => this.emit('error', { type: 'peer-unavailable' }), 6000); this.send(to, { t: 'connect', cid }); return c; }
-  destroy() { clearInterval(this.ka); try { this.ws.close(); } catch (_) {} }
+  send(to, d) {
+    if (this.up && this.ws.readyState === 1) { try { this.ws.send(JSON.stringify({ t: 'to', to, d })); return; } catch (_) {} }
+    if (!(d && d.t === 'data' && d.d && d.d.t === 'snap') && this.q.length < 300) this.q.push([to, d]); // everything but snapshots waits for the connection to come back
+  }
+  flush() { const q = this.q; this.q = []; q.forEach(x => this.send(x[0], x[1])); }
+  connect(to) {
+    const cid = Math.random().toString(36).slice(2), c = new RelayConn(this, to, cid); this.conns[cid] = c;
+    c.timer = setTimeout(() => { c.timer = null; this.emit('error', { type: 'peer-unavailable' }); }, 6000);
+    this.send(to, { t: 'connect', cid }); return c;
+  }
+  destroy() { this.closed = true; clearInterval(this.ka); clearTimeout(this.rt); clearTimeout(this.at); removeEventListener('online', this.wake); document.removeEventListener('visibilitychange', this.wake); try { this.ws.close(); } catch (_) {} }
 }
 </script>
 <script>addEventListener('error', e => { const d = document.getElementById('err'); d.style.display = 'block'; d.textContent += (e.message || 'error') + ' ' + (e.filename || '').split('/').pop() + ':' + (e.lineno || '') + '\n'; });
 const $ = id => document.getElementById(id), ctx = $('c').getContext('2d');
 $('ver').textContent = VERSION;
 const vw = () => $('c').clientWidth, vh = () => $('c').clientHeight;
-let electedDone = false, peer, roster = [], coordConns = [], lobbyConn = null, hostConn = null, sim = null, links = {}, me = 0, iAmHost = false;
+let electedDone = false, joinRetry = null, joinInfo = null, gotRoster = false, lobbyTimer = null, startMsg = null, peer, roster = [], coordConns = [], lobbyConn = null, hostConn = null, sim = null, links = {}, me = 0, iAmHost = false;
 let G = null, snaps = [], fx = [], local = null, sc = 1, ox = 0, oy = 0, pressed = false, lastSend = 0, over = null;
 let netNote = '';
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -12132,13 +12169,25 @@ const weaponLabel = id => (VOD.weapons[id] || { label: '' }).label;
 const weaponsOnline = () => $('weaponsOn').checked; // weapons in an online game: only when the host switched them on; then every player picks their own
 const gameOpts = (fresh, weapons, field) => Object.assign({}, ((VOD.playfields[field] || {}).client || {}).opts ? VOD.playfields[field].client.opts(urlq, fresh) : {}, { weapons });
 function onIncoming(c, m) {
-  if (m.t === 'hello') { if (roster.length >= 5 || electedDone) { c.send({ t: 'full' }); return; } roster.push({ pid: m.pid, name: m.name, weapon: VOD.weapons[m.weapon] ? m.weapon : 'gun', conn: c }); coordConns.push(c); showRoster(); }
+  if (m.t === 'hello') { const had = roster.find(r => r.pid === m.pid); if (had) { if (VOD.weapons[m.weapon]) had.weapon = m.weapon; if (!electedDone) showRoster(); return; } // a repeated hello (the joiner is not sure we heard it) is not a second player
+    if (roster.length >= 5 || electedDone) { c.send({ t: 'full' }); return; } roster.push({ pid: m.pid, name: m.name, weapon: VOD.weapons[m.weapon] ? m.weapon : 'gun', conn: c }); coordConns.push(c); showRoster(); }
   else if (m.t === 'weapon') { const r = roster.find(r => r.pid === c.metadata_pid); if (r && !electedDone && VOD.weapons[m.w]) { r.weapon = m.w; showRoster(); } }
-  else if (m.t === 'join') { links[m.pid] = c; maybeLaunch(); }
+  else if (m.t === 'join') { links[m.pid] = c; if (sim && sim.started) { const i = roster.findIndex(r => r.pid === m.pid); if (i >= 0) c.send(sim.init(i)); } else maybeLaunch(); } // a joiner that missed the start gets it again
   else if (m.t === 'fire' && sim) { const i = roster.findIndex(r => r.pid === c.metadata_pid); sim.fire(i, m.target); }
   else if (m.t === 'detonate' && sim) { const i = roster.findIndex(r => r.pid === c.metadata_pid); sim.detonate(i); }
   else if (m.t === 'thrust' && sim) { const i = roster.findIndex(r => r.pid === c.metadata_pid); sim.setThrust(i, m.k, m.x, m.y); }
 }
+// Housekeeping while the game is being set up: every 2 s, repeat whatever might have been lost on the way (the relay can drop messages while it reconnects). All of it is safe to receive twice.
+const sendHello = () => { if (lobbyConn && joinInfo) lobbyConn.send({ t: 'hello', pid: joinInfo.pid, name: joinInfo.name, weapon: $('pweapon').value }); };
+let tickN = 0;
+function lobbyTick() {
+  if (!peer) return; tickN++;
+  if (!lobbyConn) { if (startMsg && coordConns.every(c => links[c.metadata_pid])) { clearInterval(lobbyTimer); lobbyTimer = null; return; } // the game's creator; once everybody is in the game: done
+    if (startMsg) coordConns.forEach(c => { if (!links[c.metadata_pid]) c.send(startMsg); }); else if (roster.length > 1 && tickN % 2 === 0) showRoster(); } // the start message again for anybody who has not joined; or the roster again
+  else { if (G) { clearInterval(lobbyTimer); lobbyTimer = null; return; }
+    if (hostConn) hostConn.send({ t: 'join', pid: peer.id }); else sendHello(); } // not in yet: join again / hello again
+}
+const startLobbyTimer = () => { clearInterval(lobbyTimer); lobbyTimer = setInterval(lobbyTick, 2000); };
 const gameCode = () => ($('code').value.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[-_]+|[-_]+$/g, '') || 'a'); // the code is not secret: anyone who types it can join
 function showBlocked(txt) { const d = document.getElementById('err'); d.style.display = 'block'; d.textContent += txt + '\n'; }
 document.addEventListener('securitypolicyviolation', e => showBlocked('Blocked by the page security policy: ' + e.blockedURI + ' (' + e.violatedDirective + ')'));
@@ -12152,15 +12201,18 @@ function startPeer(kind, id, ready) {
   const rc = relayConfig(); let opened = false, dead = false, tm;
   const fail = why => { if (dead) return; dead = true; clearTimeout(tm); try { p.destroy(); } catch (_) {} msg((kind === 'relay' ? 'Could not connect to the relay: ' : 'Connection error: ') + why + '.', 'err'); };
   const p = peer = kind === 'relay' ? new RelayPeer(id, { base: rc.base, key: rc.key, room: 'g-' + gameCode() }) : new LocalPeer(id);
-  tm = setTimeout(() => { if (!opened) fail('no answer in 8 seconds'); }, 8000);
+  tm = setTimeout(() => { if (!opened) fail('no answer in 20 seconds'); }, 20000); // the transport itself retries a few times within this
   p.on('open', i => { if (dead) return; opened = true; clearTimeout(tm); netNote = 'Connection: ' + (kind === 'relay' ? 'relay (' + rc.host + ')' : 'same browser only (development)'); msg(''); ready(i); });
   p.on('error', e => {
     if (dead) return;
     if (e.type === 'unavailable-id') { dead = true; clearTimeout(tm); msg('The game ID "' + gameCode() + '" is already in use. Pick another ID.', 'err'); }
+    else if (e.type === 'peer-unavailable' && joinRetry && joinRetry()) return; // the host may just be reconnecting: try again a few times
     else if (e.type === 'peer-unavailable') msg('No game found with the ID "' + gameCode() + '". Check the ID, and that the host has pressed Host game.' + (!rc ? ' To play with others, open this page with the relay address and key.' : ''), 'err');
     else if (!opened) fail(e.type === 'relay-refused' ? 'the secret is wrong, or the relay is unreachable' : e.type || 'error'); else msg('Network error (' + e.type + ').', 'err');
   });
-  p.on('disconnected', () => { if (opened) msg('Lost the connection to the relay.', 'err'); });
+  p.on('reconnecting', () => { if (opened) msg('Connection to the relay lost, reconnecting...'); });
+  p.on('reconnected', () => { if (opened) { msg(''); lobbyTick(); } });
+  p.on('disconnected', () => { if (opened) msg('Lost the connection to the relay and could not get it back. Reload the page to try again.', 'err'); });
   p.on('connection', c => c.on('data', m => { if (m.pid) c.metadata_pid = m.pid; onIncoming(c, m); }));
 }
 const fieldName = f => (VOD.playfields[f] || { label: '' }).label;
@@ -12176,28 +12228,32 @@ function showRoster() { const names = roster.map(r => r.name), field = $('field'
 $('pweapon').onchange = () => { if (iAmHostOfLobby()) showRoster(); else if (lobbyConn) lobbyConn.send({ t: 'weapon', w: $('pweapon').value, pid: peer.id }); };
 $('weaponsOn').onchange = () => { if (roster.length && !lobbyConn) showRoster(); };
 const iAmHostOfLobby = () => roster.length > 0 && !lobbyConn;
-function leaveLobby() { try { if (peer) peer.destroy(); } catch (_) {} peer = null; iAmHost = false; roster = []; coordConns = []; lobbyConn = hostConn = null; links = {}; sim = null; electedDone = false; netNote = ''; msg('');
+function leaveLobby() { clearInterval(lobbyTimer); lobbyTimer = null; gotRoster = false; joinRetry = null; startMsg = null; try { if (peer) peer.destroy(); } catch (_) {} peer = null; iAmHost = false; roster = []; coordConns = []; lobbyConn = hostConn = null; links = {}; sim = null; electedDone = false; netNote = ''; msg('');
   $('panel').style.display = 'none'; $('setup').style.display = ''; }
 $('leave').onclick = leaveLobby;
 // back to the start dialog from a finished (or abandoned) game: throw the game state away and leave the connection
 function newGame() { clearInterval(loopId); resetGameState(); soloMode = false;
   leaveLobby(); $('lobby').style.display = ''; $('bnew').style.display = 'none'; $('hud').innerHTML = ''; }
 $('create').onclick = () => { const name = myName();
-  newPeer('vodjs-' + gameCode(), id => { roster = [{ pid: id, name }]; showRoster(); }); };
+  newPeer('vodjs-' + gameCode(), id => { roster = [{ pid: id, name }]; showRoster(); startLobbyTimer(); }); };
 $('join').onclick = () => { const name = myName();
-  newPeer(null, id => { msg('Looking for game "' + gameCode() + '"...'); lobbyConn = peer.connect('vodjs-' + gameCode(), { reliable: true });
-    const giveUp = setTimeout(() => msg('Could not reach game "' + gameCode() + '". Check the ID, and that the host has pressed Host game.', 'err'), 12000);
-    lobbyConn.on('open', () => { clearTimeout(giveUp); lobbyConn.send({ t: 'hello', pid: id, name, weapon: $('pweapon').value }); msg(''); renderLobby([], null, -1, false); });
-    lobbyConn.on('data', m => {
-      if (m.t === 'full') { leaveLobby(); msg('That game is full or has already started.', 'err'); }
-      if (m.t === 'roster') renderLobby(m.names, m.field, m.you, false, m.picks);
-      if (m.t === 'host') elected(m.hostId, m.roster, m.field, m.opts);
-    }); }); };
+  newPeer(null, id => { msg('Looking for game "' + gameCode() + '"...'); let tries = 0, opened = false; joinInfo = { pid: id, name };
+    const giveUp = setTimeout(() => { if (!opened) msg('Could not reach game "' + gameCode() + '". Check the ID, and that the host has pressed Host game.', 'err'); }, 30000);
+    const attempt = () => { lobbyConn = peer.connect('vodjs-' + gameCode(), { reliable: true });
+      lobbyConn.on('open', () => { if (opened) return; opened = true; joinRetry = null; clearTimeout(giveUp); sendHello(); msg(''); renderLobby([], null, -1, false); startLobbyTimer(); });
+      lobbyConn.on('data', m => {
+        if (m.t === 'full') { leaveLobby(); msg('That game is full or has already started.', 'err'); }
+        if (m.t === 'roster') { gotRoster = true; renderLobby(m.names, m.field, m.you, false, m.picks); }
+        if (m.t === 'host') elected(m.hostId, m.roster, m.field, m.opts);
+      }); };
+    joinRetry = () => { if (opened || ++tries >= 5) return false; setTimeout(() => { if (!opened && peer) attempt(); }, 1500); return true; };
+    attempt(); }); };
 // the game's creator is the host
 $('start').onclick = () => { $('start').style.display = 'none'; electedDone = true;
   const list = roster.map(r => ({ pid: r.pid, name: r.name })), field = $('field').value, opts = gameOpts(false, weaponsOnline() ? roster.map(r => r.weapon) : null, field);
-  coordConns.forEach(c => c.send({ t: 'host', hostId: roster[0].pid, roster: list, field, opts })); elected(roster[0].pid, list, field, opts); };
+  startMsg = { t: 'host', hostId: roster[0].pid, roster: list, field, opts }; coordConns.forEach(c => c.send(startMsg)); elected(roster[0].pid, list, field, opts); };
 function elected(hostId, list, field, opts) {
+  if (hostConn || sim) return; // the start message may arrive more than once
   roster = list; me = list.findIndex(r => r.pid === peer.id); iAmHost = hostId === peer.id;
   if (iAmHost) { sim = new VOD.Host(list.map(r => r.name), field, opts); msg('You are the host: keep this tab visible while playing.'); maybeLaunch(); setTimeout(() => maybeLaunch(true), 8000); }
   else { msg('Connecting to the host...'); hostConn = peer.connect(hostId, { reliable: true });
