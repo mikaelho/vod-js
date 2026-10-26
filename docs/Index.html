@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>VoD v40</title>
+<title>VoD v43</title>
 <style>
  :root{--ac:#cfd4da;--ac2:#eef0f2;--line:#3b4048;--mut:#8f969f;--card:rgba(255,255,255,.045)}
  html,body{margin:0;height:100%;overflow:hidden;background:#000 url(assets/spacetile2.png);color:#fff;font-family:Optima,Helvetica,sans-serif;touch-action:none}
@@ -11011,7 +11011,10 @@ function Host(names, field, opts) {
   this.projectiles = [];                              // anything a weapon launches that gravity should pull on: objects with .body
   this.W = W; this.H = H; this.pfs = {}; this.ws = {}; // pfs / ws: scratch state of the playfield / the weapon
   this.field = VOD.playfields[field] ? field : 'classic'; this.pf = VOD.playfields[this.field].host;
-  this.weapon = opts.weapon && VOD.weapons[opts.weapon] ? opts.weapon : null; this.wd = this.weapon ? VOD.weapons[this.weapon] : null; this.wh = this.wd ? this.wd.host : {};
+  // Weapons: opts.weapons = one weapon id per player, or opts.weapon = the same weapon for everybody; without either there are no weapons. this.weapon is the default (null = weapons off).
+  var wl = Array.isArray(opts.weapons) ? opts.weapons : null;
+  this.weapon = opts.weapon && VOD.weapons[opts.weapon] ? opts.weapon : wl ? (VOD.weapons.gun ? 'gun' : VOD.list('weapons')[0].id) : null;
+  this.whs = this.weapon ? VOD.list('weapons').map(function (d) { return d.host || {}; }) : []; // every weapon's host hooks run, since each player may carry a different one
   this.shipDef = VOD.ships[opts.ship] || VOD.ships.standard;
 
   var L = new b2.Dynamics.b2ContactListener();
@@ -11024,6 +11027,7 @@ function Host(names, field, opts) {
   };
   this.world.SetContactListener(L);
   this.pf.build(this, names, opts); // the playfield creates its obstacles and buoys and places the ships (helpers below)
+  if (this.weapon) this.ships.forEach(function (s, i) { s.weapon = wl && VOD.weapons[wl[i]] ? wl[i] : self.weapon; });
   this.markDummy(opts);
 }
 
@@ -11076,6 +11080,9 @@ Host.prototype.sight = function (from, to, ignore) { // first solid thing on the
   this.world.RayCast(function (fix, pt, nrm, fr) { var u = fix.GetBody().GetUserData(); if (fix.IsSensor() || fix.GetBody() === from || (ignore && ignore(u))) return 1; if (!best || fr < best.fr) best = { body: fix.GetBody(), pt: pt, fr: fr }; return fr; }, new V(p.x, p.y), new V(q.x, q.y));
   return { clear: !!best && best.body === to, pt: best && best.pt };
 };
+// A playfield may hide ships (pf.hidden(h, ship), e.g. inside a cloud): a hidden ship cannot be targeted or seen by missiles, and the other players' snapshots do not show where it is. It still collides with everything.
+Host.prototype.hidden = function (sh) { return !!(this.pf.hidden && !sh.dead && this.pf.hidden(this, sh)); };
+Host.prototype.eachWeapon = function (hook) { for (var i = 0; i < this.whs.length; i++) if (this.whs[i][hook]) this.whs[i][hook](this); }; // run one hook of every weapon in play
 Host.prototype.nofire = function (sh, why) { this.events.push({ e: 'nofire', i: sh.i, why: why }); return false; };
 Host.prototype.damage = function (t, d) { // weapon damage; wrecks and freshly respawned ships are immune
   if (t.dead || this.time < t.inv) return;
@@ -11106,14 +11113,21 @@ Host.prototype.standings = function () { // final results: most buoys first; a t
 };
 
 // The pilot fired (for targeted weapons: at ship number `target`); false when nothing happened.
+// target: a ship number, or { kind, owner } for something in flight (only for weapons that list that kind in `hits`, e.g. the gun can hit a missile).
 Host.prototype.fire = function (i, target) {
-  var sh = this.ships[i];
-  if (!sh || !this.wd || this.over || sh.dead || this.time < (sh.readyAt || 0)) return false;
+  var sh = this.ships[i], wd = sh && sh.weapon && VOD.weapons[sh.weapon];
+  if (!wd || this.over || sh.dead || this.time < (sh.readyAt || 0)) return false;
   var t = null;
-  if (this.wd.targeted) { t = this.ships[target]; if (!t || t === sh || t.dead) return this.nofire(sh, 'no target'); }
-  return this.wh.fire(this, sh, t);
+  if (wd.targeted) {
+    if (target && typeof target === 'object') {
+      t = this.projectiles.filter(function (p) { return p.kind === target.kind && p.owner === target.owner && !p.exploding; })[0];
+      if (!t || t.owner === sh.i) return this.nofire(sh, 'no target');
+      if (!(wd.hits || []).includes(t.kind)) return this.nofire(sh, 'this weapon cannot hit that');
+    } else { t = this.ships[target]; if (!t || t === sh || t.dead) return this.nofire(sh, 'no target'); if (this.hidden(t)) return this.nofire(sh, 'cannot see the target'); }
+  }
+  return wd.host.fire(this, sh, t);
 };
-Host.prototype.detonate = function (i) { return !!(this.wh.detonate && this.wh.detonate(this, i)); }; // weapons with something in flight (missile, mine)
+Host.prototype.detonate = function (i) { var sh = this.ships[i], wd = sh && sh.weapon && VOD.weapons[sh.weapon]; return !!(wd && wd.host.detonate && wd.host.detonate(this, i)); }; // weapons with something in flight (missile, mine)
 
 Host.prototype.contact = function (sh, o) {
   if (this.over || o.projectile) return; // a projectile's damage comes from its own hit() handler
@@ -11142,7 +11156,7 @@ Host.prototype.after = function () {
       this.events.push({ e: 'boom', i: sh.i, x: p.x * S, y: p.y * S });
     } else if (sh.dead && this.time >= sh.respawnAt && !this.over) this.respawn(sh);
   }
-  if (this.wh.after) this.wh.after(this);
+  this.eachWeapon('after');
 };
 Host.prototype.respawn = function (sh) {
   var V = this.V, b = sh.visited > 0 ? this.buoys[sh.visited - 1] : null, pos = b ? [b.x, b.y] : sh.start;
@@ -11179,7 +11193,7 @@ Host.prototype.tick = function () {
     self.events.push({ e: 'fire', i: sh.i, x: t[0], y: t[1] });
   });
   if (this.pf.tick) this.pf.tick(this);
-  if (this.wh.tick) this.wh.tick(this);
+  this.eachWeapon('tick');
   this.k++;
 };
 
@@ -11187,28 +11201,38 @@ Host.prototype.step = function (dt) {
   if (this.over) return;
   this.acc += Math.min(dt, 0.25);
   while (this.acc >= FIX) {
-    this.acc -= FIX; if (this.pf.before) this.pf.before(this); if (this.wh.before) this.wh.before(this); this.world.Step(FIX, 8, 3); this.world.ClearForces(); this.time += FIX; this.after();
+    this.acc -= FIX; if (this.pf.before) this.pf.before(this); this.eachWeapon('before'); this.world.Step(FIX, 8, 3); this.world.ClearForces(); this.time += FIX; this.after();
     if (this.time >= this.nextTick) { this.tick(); this.nextTick += STEP; }
   }
 };
 
 Host.prototype.init = function (you) { // sent once to every player: the static description of the game. pf / w hold what the playfield / weapon add.
-  var d = this.wd || {};
-  return { t: 'init', you: you, field: this.field, W: this.W, H: this.H, weapon: this.weapon, step: STEP, nb: NB, ship: this.shipDef.shape,
-    players: this.ships.map(function (s) { return { name: s.name, color: s.color, dummy: !!s.dummy }; }), targeted: !!d.targeted, wrange: d.range || null,
+  var me = this.ships[you], d = (me && me.weapon && VOD.weapons[me.weapon]) || {}, w = {}; // weapon / targeted / wrange describe the receiving player's own weapon
+  this.whs.forEach(function (wh) { if (wh.init) Object.assign(w, wh.init(this)); }, this);
+  return { t: 'init', you: you, field: this.field, W: this.W, H: this.H, weapon: me && me.weapon || null, thits: d.hits || [], step: STEP, nb: NB, ship: this.shipDef.shape,
+    players: this.ships.map(function (s) { return { name: s.name, color: s.color, dummy: !!s.dummy, weapon: s.weapon || null }; }), targeted: !!d.targeted, wrange: d.range || null,
     buoys: this.buoys.map(function (b) { return [b.n, b.x, b.y]; }),
-    pf: this.pf.init ? this.pf.init(this) : {}, w: this.wh.init ? this.wh.init(this) : {} };
+    pf: this.pf.init ? this.pf.init(this) : {}, w: w };
 };
 
 Host.prototype.snapshot = function () { // 20 times a second to every player. pf / w hold what the playfield / weapon add.
-  var r1 = function (v) { return Math.round(v * 10) / 10; }, r3 = function (v) { return Math.round(v * 1000) / 1000; }, ev = this.events; this.events = [];
+  var r1 = function (v) { return Math.round(v * 10) / 10; }, r3 = function (v) { return Math.round(v * 1000) / 1000; }, ev = this.events, w = {}; this.events = [];
+  this.whs.forEach(function (wh) { if (wh.snapshot) Object.assign(w, wh.snapshot(this)); }, this); // each weapon adds its own keys
   return { t: 'snap', k: this.k, ht: this.time, tin: Math.round((this.nextTick - this.time) * 1000), ev: ev,
     ships: this.ships.map(function (s) {
       var p = s.body.GetPosition(), v = s.body.GetLinearVelocity();
       return { x: r1(p.x * S), y: r1(p.y * S), a: s.body.GetAngle(), vx: r3(v.x * S), vy: r3(v.y * S),
                hp: Math.round(s.hp), n: s.visited, dead: s.dead, inv: this.time < s.inv, zc: s.zc, cd: Math.max(0, (s.readyAt || 0) - this.time), rs: s.dead ? Math.max(0, s.respawnAt - this.time) : 0, q: s.q.map(function (a) { return a.slice(); }) }; }, this),
+    hid: this.pf.hidden ? this.ships.map(this.hidden, this) : null,
     pw: this.ships.map(this.power, this),
-    pf: this.pf.snapshot ? this.pf.snapshot(this) : {}, w: this.wh.snapshot ? this.wh.snapshot(this) : {} };
+    pf: this.pf.snapshot ? this.pf.snapshot(this) : {}, w: w };
+};
+
+Host.prototype.snapshotFor = function (s, j) { // the snapshot as player j may see it: ships hidden from others show no position, speed or planned thrusts
+  if (!s.hid) return s;
+  var out = Object.assign({}, s);
+  out.ships = s.ships.map(function (sh, i) { return i !== j && s.hid[i] ? { hid: true, x: 0, y: 0, a: 0, vx: 0, vy: 0, hp: sh.hp, n: sh.n, dead: false, inv: false, zc: 0, cd: 0, rs: 0, q: [[0, 0], [0, 0]] } : sh; });
+  out.hid = null; return out;
 };
 
 VOD.Host = Host;
@@ -11466,7 +11490,7 @@ VOD.playfield('classic', {
 })();
 </script>
 <script>// Playfield "Clouds": drifting, overlapping circular clouds cover about half of the field. A ship inside a cloud when a thrust fires (every 3 s) first loses 50% of its velocity, and the thrust itself is cut by 50% too.
-// Overlaps do not stack. Cloud positions are a pure function of the host's clock (straight drift, bouncing off the edges of the field), so the client can predict them for the route preview.
+// A ship inside a cloud is also hidden from the other players, and cannot be targeted or homed in on by missiles; it can still collide with things. Overlaps do not stack. Cloud positions are a pure function of the host's clock (straight drift, bouncing off the edges of the field), so the client can predict them for the route preview.
 (function () {
 var K = VOD.K, W = K.W, H = K.H, NB = K.NB, rnd = VOD.u.rnd, pick = VOD.u.pick, KEEP = .5, SLOW = { v: KEEP, t: KEEP }, ONE = { v: 1, t: 1 }, COVER = .5, RMIN = 120, RMAX = 260;
 var bounce = function (v, L) { var m = (v % (2 * L) + 2 * L) % (2 * L); return m <= L ? m : 2 * L - m; }; // a straight run that reflects off 0 and L
@@ -11506,6 +11530,7 @@ VOD.playfield('clouds', {
       h.placeShips(names, starts, bu1);
     },
     drag: function (h, sh) { var p = sh.body.GetPosition(); return inside(h.pfs.clouds, p.x * K.S, p.y * K.S, h.time) ? SLOW : ONE; }, // velocity and thrust factors applied just before each thrust fires
+    hidden: function (h, sh) { var p = sh.body.GetPosition(); return inside(h.pfs.clouds, p.x * K.S, p.y * K.S, h.time); }, // inside a cloud: hidden from the other players and from missiles (not from collisions)
     init: function (h) { return { clouds: h.pfs.clouds }; }
   },
   client: {
@@ -11727,18 +11752,20 @@ VOD.playfield('shells', {
 <script>// Weapon "Gun": instant hit on the designated ship if it is within range and in the clear; weak, with half the usual cooldown. VOD.weapon(id, def) - see src/README.md.
 (function () {
 var S = VOD.K.S, RANGE = 320, DMG = 25, CD = VOD.K.WEAPON_CD / 2;
-var noProjectiles = function (u) { return u && u.projectile; };
+var clearOf = function (t) { return function (u) { return u && u.projectile && u !== t; }; }; // projectiles do not block the shot, except the target itself
 
 VOD.weapon('gun', {
   label: 'Gun', order: 10,
   targeted: true,   // the pilot arms it, then taps the target ship; host.fire(i, target) gets that ship
   range: RANGE,     // shown to the pilot as a circle while aiming
+  hits: ['missile'], // besides ships, it can shoot down a missile in flight (the pilot taps the missile)
   host: {
     fire: function (h, sh, t) { // called only when the pilot is alive and off cooldown; return true when fired (and set sh.readyAt), or h.nofire(sh, 'reason')
       var V = h.V, p = sh.body.GetPosition(), q = t.body.GetPosition(), x = p.x * S, y = p.y * S, dx = q.x * S - x, dy = q.y * S - y, len = Math.hypot(dx, dy) || 1;
       if (len > RANGE) return h.nofire(sh, 'out of range');
-      var r = h.sight(sh.body, t.body, noProjectiles);
+      var r = h.sight(sh.body, t.body, clearOf(t));
       if (!r.clear) return h.nofire(sh, 'no line of sight');
+      if (t.kind === 'missile') { t.exploding = true; h.events.push({ e: 'shot', i: sh.i, x1: Math.round(x), y1: Math.round(y), x2: Math.round(q.x * S), y2: Math.round(q.y * S), hit: true }); sh.readyAt = h.time + CD; return true; } // shot down: it explodes where it is
       h.damage(t, DMG); t.body.ApplyImpulse(new V(dx / len * .15, dy / len * .15), t.body.GetWorldCenter()); // a small shove
       h.events.push({ e: 'shot', i: sh.i, x1: Math.round(x), y1: Math.round(y), x2: Math.round(r.pt.x * S), y2: Math.round(r.pt.y * S), hit: true });
       sh.readyAt = h.time + CD; return true;
@@ -11819,7 +11846,7 @@ VOD.weapon('hammer', {
     interp: function (a, b, L) { return { hammers: (a.hammers || []).map(function (m) { const n = (b.hammers || []).find(o => o[2] === m[2]); return n ? [L(m[0], n[0]), L(m[1], n[1]), m[2]] : m; }) }; },
     draw: function (G, I, now) {
       I.w.hammers.forEach(m => {
-        const sh = I.ships[m[2]], col = G.players[m[2]].color; if (!sh) return;
+        const sh = I.ships[m[2]], col = G.players[m[2]].color; if (!sh || sh.hid) return;
         ctx.save(); ctx.strokeStyle = col; ctx.globalAlpha = .7; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sh.x, sh.y); ctx.lineTo(m[0], m[1]); ctx.stroke(); ctx.globalAlpha = 1; // the tether
         ctx.shadowColor = col; ctx.shadowBlur = 16; ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; circle(m[0], m[1], 17); ctx.fill(); ctx.stroke();
         ctx.shadowBlur = 0; ctx.fillStyle = col; circle(m[0], m[1], 6); ctx.fill(); ctx.restore();
@@ -11860,7 +11887,7 @@ VOD.weapon('harpoon', {
     fx: function (f, now) { // a rope between the two ships that goes slack as they close in
       if (f.e !== 'harpoon') return;
       const a = 1 - (now - f.at) / 600; if (a <= 0 || !snaps.length) return;
-      const I = interp(now - 100), s1 = I.ships[f.i], s2 = I.ships[f.t]; if (!s1 || !s2) return;
+      const I = interp(now - 100), s1 = I.ships[f.i], s2 = I.ships[f.t]; if (!s1 || !s2 || s1.hid || s2.hid) return;
       ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, 2 / sc); ctx.setLineDash([10 / sc, 6 / sc]); ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke(); ctx.setLineDash([]);
       ctx.fillStyle = '#fff'; circle(s2.x, s2.y, 7 + 8 * (1 - a)); ctx.fill(); ctx.restore();
     }
@@ -11943,7 +11970,7 @@ var isProjectile = function (u) { return u && u.projectile; };
 var mine = function (h, i) { return h.projectiles.filter(function (m) { return m.kind === 'missile' && m.owner === i; }); };
 
 function steer(h, m) { // a guidance pulse: with a clear view of the target, thrust flat out in the direction that cancels the sideways drift and closes in
-  var t = h.ships[m.target]; if (!t || t.dead || !h.sight(m.body, t.body, isProjectile).clear) return; // otherwise coast
+  var t = h.ships[m.target]; if (!t || t.dead || h.hidden(t) || !h.sight(m.body, t.body, isProjectile).clear) return; // otherwise coast
   var V = h.V, p = m.body.GetPosition(), q = t.body.GetPosition(), v = m.body.GetLinearVelocity(), tv = t.body.GetLinearVelocity(), dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy) || 1;
   var nx = dx / len * MISSILE.speed / S - (v.x - tv.x), ny = dy / len * MISSILE.speed / S - (v.y - tv.y), nl = Math.hypot(nx, ny) || 1, k = MISSILE.dv * MISSILE.every / STEP / S * m.body.GetMass(); // wanted change of velocity gives the direction; the pulse is limited to the engine's budget
   m.body.ApplyImpulse(new V(nx / nl * k, ny / nl * k), m.body.GetWorldCenter());
@@ -12000,7 +12027,7 @@ VOD.weapon('missile', {
 })();
 </script>
 <script>// Bump this on every update; build.py shows it in the page title, the dialog and the in-game sidebar.
-const VERSION = 'v40';
+const VERSION = 'v43';
 </script>
 <script>// Connection layer. Three interchangeable transports with the small PeerJS-like interface the lobby uses:
 //   new T(id)  .id  .on('open' | 'error' | 'connection' | 'disconnected')  .connect(id) -> conn  .destroy()
@@ -12102,10 +12129,11 @@ fillSelect($('field'), VOD.list('playfields')); fillSelect($('sfield'), VOD.list
 if (urlq.get('field') && VOD.playfields[urlq.get('field')]) $('field').value = $('sfield').value = urlq.get('field');
 fillWeapons($('sweapon'), true); fillWeapons($('pweapon'), false);
 const weaponLabel = id => (VOD.weapons[id] || { label: '' }).label;
-const hostWeapon = () => $('weaponsOn').checked ? $('pweapon').value : null; // the weapon of an online game: only when the host switched weapons on
-const gameOpts = (fresh, weapon, field) => Object.assign({}, ((VOD.playfields[field] || {}).client || {}).opts ? VOD.playfields[field].client.opts(urlq, fresh) : {}, { weapon });
+const weaponsOnline = () => $('weaponsOn').checked; // weapons in an online game: only when the host switched them on; then every player picks their own
+const gameOpts = (fresh, weapons, field) => Object.assign({}, ((VOD.playfields[field] || {}).client || {}).opts ? VOD.playfields[field].client.opts(urlq, fresh) : {}, { weapons });
 function onIncoming(c, m) {
-  if (m.t === 'hello') { if (roster.length >= 5 || electedDone) { c.send({ t: 'full' }); return; } roster.push({ pid: m.pid, name: m.name, conn: c }); coordConns.push(c); showRoster(); }
+  if (m.t === 'hello') { if (roster.length >= 5 || electedDone) { c.send({ t: 'full' }); return; } roster.push({ pid: m.pid, name: m.name, weapon: VOD.weapons[m.weapon] ? m.weapon : 'gun', conn: c }); coordConns.push(c); showRoster(); }
+  else if (m.t === 'weapon') { const r = roster.find(r => r.pid === c.metadata_pid); if (r && !electedDone && VOD.weapons[m.w]) { r.weapon = m.w; showRoster(); } }
   else if (m.t === 'join') { links[m.pid] = c; maybeLaunch(); }
   else if (m.t === 'fire' && sim) { const i = roster.findIndex(r => r.pid === c.metadata_pid); sim.fire(i, m.target); }
   else if (m.t === 'detonate' && sim) { const i = roster.findIndex(r => r.pid === c.metadata_pid); sim.detonate(i); }
@@ -12136,16 +12164,18 @@ function startPeer(kind, id, ready) {
   p.on('connection', c => c.on('data', m => { if (m.pid) c.metadata_pid = m.pid; onIncoming(c, m); }));
 }
 const fieldName = f => (VOD.playfields[f] || { label: '' }).label;
-function renderLobby(names, field, you, isHost, weapon) { // the open-game panel: game ID, playfield, who is in
+function renderLobby(names, field, you, isHost, picks) { // the open-game panel: game ID, playfield, who is in, and (when weapons are on) what each carries
   $('setup').style.display = 'none'; $('panel').style.display = ''; $('pgid').textContent = gameCode(); $('pfield').textContent = field ? fieldName(field) : '';
-  $('plist').innerHTML = names.map((n, i) => '<li><span class="dot" style="background:' + COLS[i % COLS.length] + '"></span><span>' + esc(n) + '</span><span class="tag">' + [i === 0 ? 'host' : '', i === you ? 'you' : ''].filter(Boolean).join(' &middot; ') + '</span></li>').join('');
-  $('pweaprow').style.display = isHost && $('weaponsOn').checked ? '' : 'none'; $('pwbadge').style.display = !isHost && weapon ? '' : 'none'; $('pwbadge').textContent = weapon ? 'Weapon: ' + weaponLabel(weapon) : '';
+  $('plist').innerHTML = names.map((n, i) => '<li><span class="dot" style="background:' + COLS[i % COLS.length] + '"></span><span>' + esc(n) + '</span><span class="tag">' + [picks ? weaponLabel(picks[i]) : '', i === 0 ? 'host' : '', i === you ? 'you' : ''].filter(Boolean).join(' &middot; ') + '</span></li>').join('');
+  $('pweaprow').style.display = picks ? '' : 'none'; if (picks && picks[you] && $('pweapon').value !== picks[you]) $('pweapon').value = picks[you];
   $('start').style.display = isHost ? '' : 'none'; $('pnote').className = isHost ? '' : 'wait';
   $('pnote').textContent = isHost ? 'Share the game ID with the other players, then press Start game when everybody is in.' : 'Waiting for the host to start the game';
 }
-function showRoster() { const names = roster.map(r => r.name), field = $('field').value, weapon = hostWeapon(); renderLobby(names, field, 0, true, weapon);
-  coordConns.forEach((c, i) => c.send({ t: 'roster', names, field, weapon, you: i + 1 })); }
-$('pweapon').onchange = () => { if (roster.length) showRoster(); };
+function showRoster() { const names = roster.map(r => r.name), field = $('field').value; if (roster.length) roster[0].weapon = $('pweapon').value; const picks = weaponsOnline() ? roster.map(r => r.weapon) : null; renderLobby(names, field, 0, true, picks);
+  coordConns.forEach((c, i) => c.send({ t: 'roster', names, field, picks, you: i + 1 })); }
+$('pweapon').onchange = () => { if (iAmHostOfLobby()) showRoster(); else if (lobbyConn) lobbyConn.send({ t: 'weapon', w: $('pweapon').value, pid: peer.id }); };
+$('weaponsOn').onchange = () => { if (roster.length && !lobbyConn) showRoster(); };
+const iAmHostOfLobby = () => roster.length > 0 && !lobbyConn;
 function leaveLobby() { try { if (peer) peer.destroy(); } catch (_) {} peer = null; iAmHost = false; roster = []; coordConns = []; lobbyConn = hostConn = null; links = {}; sim = null; electedDone = false; netNote = ''; msg('');
   $('panel').style.display = 'none'; $('setup').style.display = ''; }
 $('leave').onclick = leaveLobby;
@@ -12157,15 +12187,15 @@ $('create').onclick = () => { const name = myName();
 $('join').onclick = () => { const name = myName();
   newPeer(null, id => { msg('Looking for game "' + gameCode() + '"...'); lobbyConn = peer.connect('vodjs-' + gameCode(), { reliable: true });
     const giveUp = setTimeout(() => msg('Could not reach game "' + gameCode() + '". Check the ID, and that the host has pressed Host game.', 'err'), 12000);
-    lobbyConn.on('open', () => { clearTimeout(giveUp); lobbyConn.send({ t: 'hello', pid: id, name }); msg(''); renderLobby([], null, -1, false); });
+    lobbyConn.on('open', () => { clearTimeout(giveUp); lobbyConn.send({ t: 'hello', pid: id, name, weapon: $('pweapon').value }); msg(''); renderLobby([], null, -1, false); });
     lobbyConn.on('data', m => {
       if (m.t === 'full') { leaveLobby(); msg('That game is full or has already started.', 'err'); }
-      if (m.t === 'roster') renderLobby(m.names, m.field, m.you, false, m.weapon);
+      if (m.t === 'roster') renderLobby(m.names, m.field, m.you, false, m.picks);
       if (m.t === 'host') elected(m.hostId, m.roster, m.field, m.opts);
     }); }); };
 // the game's creator is the host
 $('start').onclick = () => { $('start').style.display = 'none'; electedDone = true;
-  const list = roster.map(r => ({ pid: r.pid, name: r.name })), field = $('field').value, opts = gameOpts(false, hostWeapon(), field);
+  const list = roster.map(r => ({ pid: r.pid, name: r.name })), field = $('field').value, opts = gameOpts(false, weaponsOnline() ? roster.map(r => r.weapon) : null, field);
   coordConns.forEach(c => c.send({ t: 'host', hostId: roster[0].pid, roster: list, field, opts })); elected(roster[0].pid, list, field, opts); };
 function elected(hostId, list, field, opts) {
   roster = list; me = list.findIndex(r => r.pid === peer.id); iAmHost = hostId === peer.id;
@@ -12176,7 +12206,7 @@ function elected(hostId, list, field, opts) {
 }
 let soloMode = false, soloName = '', loopId = null;
 function startSolo(fresh) { roster = [{ pid: 'me', name: soloName }]; me = 0; iAmHost = true; const w = $('sweapon').value === 'none' ? null : $('sweapon').value; // with a weapon, solo practice gets a practice target
-  sim = new VOD.Host(w ? [soloName, 'Target'] : [soloName], $('sfield').value, Object.assign(gameOpts(fresh, w, $('sfield').value), { dummy: !!w })); maybeLaunch(true); }
+  sim = new VOD.Host(w ? [soloName, 'Target'] : [soloName], $('sfield').value, Object.assign(gameOpts(fresh, w ? [w, w] : null, $('sfield').value), { dummy: !!w })); maybeLaunch(true); }
 $('solo').onclick = () => { soloMode = true; soloName = myName(); startSolo(false); };
 // "New" (solo only): throw the game away and start again with a new random layout and the current settings, for quick tuning
 $('bnew').onclick = () => { clearInterval(loopId); resetGameState(); startSolo(true); };
@@ -12188,7 +12218,7 @@ function maybeLaunch(force) {
   onHostMsg(sim.init(me));
   let last = performance.now(), lastSnap = 0;
   loopId = setInterval(() => { const n = performance.now(); sim.step((n - last) / 1000); last = n;
-    if (n - lastSnap >= 50) { lastSnap = n; const s = sim.snapshot(); roster.forEach((r, i) => links[r.pid] && links[r.pid].send(s)); onHostMsg(s); } }, 16);
+    if (n - lastSnap >= 50) { lastSnap = n; const s = sim.snapshot(); roster.forEach((r, i) => links[r.pid] && links[r.pid].send(sim.snapshotFor(s, i))); onHostMsg(sim.snapshotFor(s, me)); } }, 16);
 }
 
 </script>
@@ -12205,7 +12235,8 @@ function onHostMsg(m) {
     if (e.e === 'respawn' && e.i === me) { view.z = Math.min(8, .9 / base()); view.cx = e.x; view.cy = e.y; } } }); // my ship is back: zoom to it
 }
 const latest = () => snaps[snaps.length - 1];
-const PFC = () => VOD.playfields[G.field].client || {}, WC = () => (G.weapon && VOD.weapons[G.weapon].client) || {}; // the playfield's and the weapon's client hooks
+const PFC = () => VOD.playfields[G.field].client || {}, WC = () => (G.weapon && VOD.weapons[G.weapon].client) || {}; // the playfield's and my own weapon's client hooks
+const AW = () => G && G.weapon ? VOD.list('weapons').map(d => d.client || {}) : []; // every weapon's client hooks: anybody's shot, missile or mine has to be drawn and heard
 function accel(x, y, T) { const p = PFC(); return p.accel ? p.accel(G, x, y, T) : [0, 0]; } // gravity (px/s^2) at host time T, same formula as the host uses
 function fly(st, T, dur, pts) { // integrate dur seconds from [x, y, vx, vy] at host time T, optionally collecting the path
   const n = Math.max(1, Math.ceil(dur * 60)), h = dur / n; let [x, y, vx, vy] = st; // 1/60 s steps, same as the host's physics
@@ -12225,9 +12256,10 @@ function fireWeapon() { // the Fire button or the space bar
 }
 function tapTarget(e) { // while armed, a tap on an enemy ship designates it and fires
   if (!G || snaps.length < 2) return false;
-  const I = interp(performance.now() - 100), wx = (e.clientX - ox) / sc, wy = (e.clientY - oy) / sc, r = Math.max(30, 44 / sc); let best = -1, bd = 1e9;
-  I.ships.forEach((sh, i) => { if (i === me || sh.dead) return; const d = Math.hypot(sh.x - wx, sh.y - wy); if (d < r && d < bd) { bd = d; best = i; } });
-  if (best < 0) return false;
+  const I = interp(performance.now() - 100), wx = (e.clientX - ox) / sc, wy = (e.clientY - oy) / sc, r = Math.max(30, 44 / sc); let best = null, bd = 1e9;
+  I.ships.forEach((sh, i) => { if (i === me || sh.dead || sh.hid) return; const d = Math.hypot(sh.x - wx, sh.y - wy); if (d < r && d < bd) { bd = d; best = i; } });
+  if (G.thits.includes('missile')) (I.w.missiles || []).forEach(m => { if (m[2] === me) return; const d = Math.hypot(m[0] - wx, m[1] - wy); if (d < r && d < bd) { bd = d; best = { kind: 'missile', owner: m[2] }; } }); // a missile in flight can be tapped too, if my weapon can hit it
+  if (best === null) return false;
   armed = false; sendFire(best); return true;
 }
 $('bfire').onclick = fireWeapon;
@@ -12270,7 +12302,7 @@ function zoomAt(x, y, f) { const wx = (x - ox) / sc, wy = (y - oy) / sc; view.z 
   view.cx = wx - (x - vw() / 2) / s2; view.cy = wy - (y - vh() / 2) / s2; }
 function hitThrust(e) { if (!G || snaps.length < 2 || over || latest().ships[me].dead) return false; const P = plan();
   return Math.hypot(e.clientX - (P.H[FREE][0] * sc + ox), e.clientY - (P.H[FREE][1] * sc + oy)) < 70 || Math.hypot(e.clientX - (P.C[FREE][0] * sc + ox), e.clientY - (P.C[FREE][1] * sc + oy)) < Math.max(P.pw * P.tf[FREE] * sc * 1.3, 80); }
-$('c').addEventListener('wheel', e => { e.preventDefault(); if (G) zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15); }, { passive: false });
+$('c').addEventListener('wheel', e => { e.preventDefault(); if (G) zoomAt(e.clientX, e.clientY, Math.exp(-Math.max(-100, Math.min(100, e.deltaY * (e.deltaMode === 1 ? 33 : 1))) * (e.ctrlKey ? .006 : .0007))); }, { passive: false });
 $('c').addEventListener('pointerdown', e => { if (armed && tapTarget(e)) return; ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY }); try { $('c').setPointerCapture(e.pointerId); } catch (_) {}
   if (ptrs.size === 1) { if (hitThrust(e)) { mode = 'thrust'; setThird(e); } else mode = 'pan'; } else mode = 'pinch'; });
 $('c').addEventListener('pointermove', e => { const o = ptrs.get(e.pointerId); if (!o || !G) return;
@@ -12288,11 +12320,11 @@ addEventListener('pointerup', endPtr); addEventListener('pointercancel', endPtr)
 function interp(rt) { // state at local time rt, placed on the host's game clock; s = the snapshot whose queue and lock time apply at that moment
   const th = (rt + clock.off) / 1000; let a = snaps[0], b = snaps[0];
   for (let i = snaps.length - 1; i >= 0; i--) if (snaps[i].ht <= th) { a = snaps[i]; b = snaps[i + 1] || a; break; }
-  const pfc = PFC(), wc = WC(), f = b.ht > a.ht ? Math.min(1, Math.max(0, (th - a.ht) / (b.ht - a.ht))) : 0, L = (u, v) => u + (v - u) * f;
+  const pfc = PFC(), f = b.ht > a.ht ? Math.min(1, Math.max(0, (th - a.ht) / (b.ht - a.ht))) : 0, L = (u, v) => u + (v - u) * f;
   const ang = (u, v) => { let d = v - u; d -= Math.round(d / (2 * Math.PI)) * 2 * Math.PI; return u + d * f; };
   return { s: th < a.tickH ? a : b, th,
-           ships: a.ships.map((s, i) => Object.assign({}, b.ships[i], { x: L(s.x, b.ships[i].x), y: L(s.y, b.ships[i].y), vx: L(s.vx, b.ships[i].vx), vy: L(s.vy, b.ships[i].vy), a: ang(s.a, b.ships[i].a) })),
-           pf: pfc.interp ? pfc.interp(a.pf, b.pf, L, ang) : {}, w: wc.interp ? wc.interp(a.w, b.w, L, ang) : {} };
+           ships: a.ships.map((s, i) => s.hid || b.ships[i].hid ? Object.assign({}, b.ships[i]) : Object.assign({}, b.ships[i], { x: L(s.x, b.ships[i].x), y: L(s.y, b.ships[i].y), vx: L(s.vx, b.ships[i].vx), vy: L(s.vy, b.ships[i].vy), a: ang(s.a, b.ships[i].a) })),
+           pf: pfc.interp ? pfc.interp(a.pf, b.pf, L, ang) : {}, w: AW().reduce((o, c) => c.interp ? Object.assign(o, c.interp(a.w, b.w, L, ang)) : o, {}) };
 }
 function poly(pts, close) { ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); if (close) ctx.closePath(); }
 function smooth(p) { const n = p.length, m = i => [(p[i][0] + p[(i + 1) % n][0]) / 2, (p[i][1] + p[(i + 1) % n][1]) / 2]; ctx.beginPath(); const s = m(n - 1); ctx.moveTo(s[0], s[1]);
@@ -12307,7 +12339,7 @@ function frame() {
   if (view.cx === null) { view.cx = G.W / 2; view.cy = G.H / 2; }
   sc = Math.min(w / G.W, h / G.H) * view.z; ox = w / 2 - view.cx * sc; oy = h / 2 - view.cy * sc;
   ctx.translate(ox, oy); ctx.scale(sc, sc);
-  const now = performance.now(), I = interp(now - 100), s = latest(), pfc = PFC(), wc = WC(); fx = fx.filter(f => now - f.at < (f.e === 'boom' ? 1500 : 700));
+  const now = performance.now(), I = interp(now - 100), s = latest(), pfc = PFC(), aw = AW(); fx = fx.filter(f => now - f.at < (f.e === 'boom' ? 1500 : 700));
   ctx.strokeStyle = 'rgba(255,255,255,.15)'; ctx.lineWidth = 2; ctx.strokeRect(0, 0, G.W, G.H);
   if (pfc.draw) pfc.draw(G, I); // the playfield's background: obstacles, planet, walls
   // buoys
@@ -12328,11 +12360,11 @@ function frame() {
   { const nb2 = G.buoys.find(b => b[0] === s.ships[me].n + 2); // weaker, slower ping for the buoy after the next
     if (nb2) { const pl = ((now + 700) % 2000) / 2000; ctx.save(); ctx.strokeStyle = G.players[me].color; ctx.lineWidth = 2; ctx.globalAlpha = .3 * (1 - pl); circle(nb2[1], nb2[2], 20 + 10 * pl); ctx.stroke(); ctx.restore(); } }
   // flames
-  fx.filter(f => f.e === 'fire').forEach(f => { const sh = I.ships[f.i], len = Math.hypot(f.x, f.y), al = 1 - (now - f.at) / 700, d = Math.atan2(f.y, f.x) + Math.PI;
+  fx.filter(f => f.e === 'fire' && !I.ships[f.i].hid).forEach(f => { const sh = I.ships[f.i], len = Math.hypot(f.x, f.y), al = 1 - (now - f.at) / 700, d = Math.atan2(f.y, f.x) + Math.PI;
     const g = ctx.createLinearGradient(sh.x, sh.y, sh.x + Math.cos(d) * (60 + len), sh.y + Math.sin(d) * (60 + len)); g.addColorStop(0, 'rgba(255,255,255,' + al + ')'); g.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(sh.x, sh.y); ctx.arc(sh.x, sh.y, 60 + len, d - .25, d + .25); ctx.closePath(); ctx.fill(); });
   // ships
-  I.ships.forEach((sh, i) => { if (sh.dead) return; const p = G.players[i], hit = fx.some(f => f.e === 'hit' && f.i === i && now - f.at < 300);
+  I.ships.forEach((sh, i) => { if (sh.dead || sh.hid) return; const p = G.players[i], hit = fx.some(f => f.e === 'hit' && f.i === i && now - f.at < 300);
     ctx.save(); ctx.translate(sh.x, sh.y); ctx.rotate(sh.a); poly(G.ship.map(q => [q[0] - 18, q[1] - 15]), true);
     ctx.globalAlpha = sh.inv && Math.floor(now / 150) % 2 ? .4 : 1; ctx.fillStyle = '#000'; ctx.strokeStyle = hit ? '#f55' : '#fff'; ctx.lineWidth = 2; ctx.shadowColor = hit ? '#f33' : p.color; ctx.shadowBlur = 20; ctx.fill(); ctx.stroke(); ctx.restore();
     ctx.fillStyle = p.color; ctx.font = '20px Optima,sans-serif'; ctx.textAlign = 'center'; ctx.fillText(p.name, sh.x, sh.y - 40);
@@ -12344,12 +12376,12 @@ function frame() {
       for (let k = 0; k < 16; k++) { const an = k * Math.PI / 8 + (k % 3) * .2, sp = 60 + (k * 37 % 100); circle(f.x + Math.cos(an) * sp * t * 2, f.y + Math.sin(an) * sp * t * 2, 4 * (1 - t) + 1); ctx.fill(); } ctx.restore(); }
     if (f.e === 'respawn' && t < 1) { ctx.save(); ctx.globalAlpha = t; ctx.strokeStyle = G.players[f.i].color; ctx.lineWidth = 4; circle(f.x, f.y, 100 * (1 - t) + 10); ctx.stroke(); ctx.restore(); } });
   if (pfc.fx) fx.forEach(f => pfc.fx(f, now));
-  if (wc.fx) fx.forEach(f => wc.fx(f, now)); // the weapon's own effects and projectiles
-  if (wc.draw) wc.draw(G, I, now);
+  aw.forEach(wc => { if (wc.fx) fx.forEach(f => wc.fx(f, now)); if (wc.draw) wc.draw(G, I, now); }); // every weapon's own effects and projectiles
   if (armed && G.weapon && !s.ships[me].dead) { // aiming: the weapon's range around me, and a ring on every ship that can be tapped
     const mine = I.ships[me], pulse = 3 * Math.sin(now / 150); ctx.save(); ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1.5, 1.5 / sc);
     if (G.wrange) { ctx.globalAlpha = .35; ctx.setLineDash([10 / sc, 10 / sc]); circle(mine.x, mine.y, G.wrange); ctx.stroke(); ctx.setLineDash([]); }
-    I.ships.forEach((sh, i) => { if (i === me || sh.dead) return; ctx.globalAlpha = !G.wrange || Math.hypot(sh.x - mine.x, sh.y - mine.y) <= G.wrange ? .95 : .3; circle(sh.x, sh.y, Math.max(32, 24 / sc) + pulse); ctx.stroke(); });
+    I.ships.forEach((sh, i) => { if (i === me || sh.dead || sh.hid) return; ctx.globalAlpha = !G.wrange || Math.hypot(sh.x - mine.x, sh.y - mine.y) <= G.wrange ? .95 : .3; circle(sh.x, sh.y, Math.max(32, 24 / sc) + pulse); ctx.stroke(); });
+    if (G.thits.includes('missile')) (I.w.missiles || []).forEach(m => { if (m[2] === me) return; ctx.globalAlpha = !G.wrange || Math.hypot(m[0] - mine.x, m[1] - mine.y) <= G.wrange ? .95 : .3; circle(m[0], m[1], Math.max(22, 16 / sc) + pulse); ctx.stroke(); });
     ctx.restore(); }
   // my plan
   if (!s.ships[me].dead && !over) {
@@ -12365,7 +12397,7 @@ function frame() {
 }
 requestAnimationFrame(frame);
 setInterval(() => { if (!G || !snaps.length) return; const s = latest();
-  $('hud').innerHTML = G.players.map((p, i) => p.dummy ? `<span style="color:${p.color}">${p.name}</span>: practice target, hull ${s.ships[i].hp}%${s.ships[i].dead ? ' - destroyed, back soon' : ''}` : `<span style="color:${p.color}">${p.name}${i === me ? ' (you)' : ''}</span>: ${s.ships[i].n}/${G.nb}, hull ${s.ships[i].hp}%${s.ships[i].dead ? ' - DESTROYED, back in ' + Math.ceil(s.ships[i].rs) + 's' : ''}` + (s.pw[i] > 100 ? `, underdog +${Math.round(s.pw[i] - 100)}%` : '')).join('<br>') + (iAmHost ? '<br><small>you are the host: keep this tab visible</small>' : '') + (PFC().hud ? PFC().hud(G) : '') + (G.weapon ? '<br><small>Weapon: ' + weaponLabel(G.weapon) + '</small>' : '') + '<br><small>' + VERSION + '</small>';
+  $('hud').innerHTML = G.players.map((p, i) => p.dummy ? `<span style="color:${p.color}">${p.name}</span>: practice target, hull ${s.ships[i].hp}%${s.ships[i].dead ? ' - destroyed, back soon' : ''}` : `<span style="color:${p.color}">${p.name}${i === me ? ' (you)' : ''}</span>${p.weapon && G.players.length > 1 ? ' [' + weaponLabel(p.weapon) + ']' : ''}: ${s.ships[i].n}/${G.nb}, hull ${s.ships[i].hp}%${s.ships[i].dead ? ' - DESTROYED, back in ' + Math.ceil(s.ships[i].rs) + 's' : ''}` + (s.pw[i] > 100 ? `, underdog +${Math.round(s.pw[i] - 100)}%` : '')).join('<br>') + (iAmHost ? '<br><small>you are the host: keep this tab visible</small>' : '') + (PFC().hud ? PFC().hud(G) : '') + (G.weapon ? '<br><small>Weapon: ' + weaponLabel(G.weapon) + '</small>' : '') + '<br><small>' + VERSION + '</small>';
   const fb = $('bfire'); fb.style.display = G.weapon ? '' : 'none';
   if (G.weapon) { const cd = Math.max(0, s.ships[me].cd - (performance.now() - s.at) / 1000); fb.disabled = (cd > 0 && !armed && !(WC().canDetonate && WC().canDetonate(s, me))) || s.ships[me].dead || !!over; fb.className = armed ? 'armed' : '';
     const wc = WC(); fb.textContent = wc.canDetonate && wc.canDetonate(s, me) ? 'Detonate' : armed ? 'Tap a target (tap here to cancel)' : cd > 0 ? weaponLabel(G.weapon) + ' ' + cd.toFixed(1) + ' s' : (G.targeted ? 'Aim ' : ((typeof wc.verb === 'function' ? wc.verb(s, me) : wc.verb) || 'Fire') + ' ') + weaponLabel(G.weapon); }
@@ -12411,11 +12443,11 @@ function sfx(e) {
   const now = performance.now(); if (now - (SND.last[e.e] || 0) < 40 && e.e !== 'win') return; SND.last[e.e] = now;
   let v = 1; // louder when it concerns me, fainter with distance otherwise
   if (e.i !== me && e.e !== 'win' && e.e !== 'arm' && e.e !== 'disarm' && snaps.length) {
-    const s = latest(), mine = s.ships[me], at = e.x != null ? [e.x, e.y] : e.i != null && s.ships[e.i] ? [s.ships[e.i].x, s.ships[e.i].y] : null;
+    const s = latest(), mine = s.ships[me], at = e.x != null ? [e.x, e.y] : e.i != null && s.ships[e.i] && !s.ships[e.i].hid ? [s.ships[e.i].x, s.ships[e.i].y] : null;
     v = at ? Math.max(.2, Math.min(1, 1 / (1 + Math.hypot(at[0] - mine.x, at[1] - mine.y) / 500))) * .85 : .4;
   }
   if (e.e === 'nofire' && e.i !== me) return;
-  try { if (CORE_SOUNDS[e.e]) CORE_SOUNDS[e.e](e, v); else { const wc = WC(), pc = PFC(); if (wc.sound) wc.sound(e, v, T); if (pc.sound) pc.sound(e, v, T); } } catch (_) {}
+  try { if (CORE_SOUNDS[e.e]) CORE_SOUNDS[e.e](e, v); else { const pc = PFC(); AW().forEach(wc => { if (wc.sound) wc.sound(e, v, T); }); if (pc.sound) pc.sound(e, v, T); } } catch (_) {}
 }
 const setSndLabel = () => { $('bsnd').textContent = SND.on ? 'Sound' : 'Muted'; };
 $('bsnd').onclick = () => { sndInit(); SND.on = !SND.on; try { localStorage.setItem('vodSound', SND.on ? '1' : '0'); } catch (_) {} setSndLabel(); };
