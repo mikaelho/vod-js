@@ -55,13 +55,13 @@ VOD.weapon('hammer', {
     sound: function (e, v, T) {
       if (e.e === 'deploy') { T.tone(120, 520, .4, 'sawtooth', .25 * v, 0, .08); T.noise(.4, 'bandpass', 500, 1500, .6 * v, 0, .1); }
       else if (e.e === 'retract') { T.tone(520, 120, .3, 'sawtooth', .25 * v, 0, .05); T.noise(.3, 'bandpass', 1500, 500, .5 * v, 0, .06); }
-      else if (e.e === 'bonk') { T.tone(310, 300, .4, 'triangle', .45 * v); T.tone(487, 480, .35, 'sine', .2 * v); T.tone(780, 770, .25, 'sine', .1 * v); }
+      else if (e.e === 'bonk') CORE_SOUNDS.hit({ d: 20 }, v); // the same sound as any other hit
     },
     verb: function (s, me) { return (s.w.hammers || []).some(function (m) { return m[2] === me; }) ? 'Retract' : 'Deploy'; }, // button: "Deploy Hammer" / "Retract Hammer"
     interp: function (a, b, L) { return { hammers: (a.hammers || []).map(function (m) { const n = (b.hammers || []).find(o => o[2] === m[2]); return n ? [L(m[0], n[0]), L(m[1], n[1]), m[2]] : m; }) }; },
     draw: function (G, I, now) {
       I.w.hammers.forEach(m => {
-        const sh = I.ships[m[2]], col = G.players[m[2]].color; if (!sh) return;
+        const sh = I.ships[m[2]], col = G.players[m[2]].color; if (!sh || sh.hid) return;
         ctx.save(); ctx.strokeStyle = col; ctx.globalAlpha = .7; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sh.x, sh.y); ctx.lineTo(m[0], m[1]); ctx.stroke(); ctx.globalAlpha = 1; // the tether
         ctx.shadowColor = col; ctx.shadowBlur = 16; ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; circle(m[0], m[1], 17); ctx.fill(); ctx.stroke();
         ctx.shadowBlur = 0; ctx.fillStyle = col; circle(m[0], m[1], 6); ctx.fill(); ctx.restore();

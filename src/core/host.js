@@ -13,7 +13,10 @@ function Host(names, field, opts) {
   this.projectiles = [];                              // anything a weapon launches that gravity should pull on: objects with .body
   this.W = W; this.H = H; this.pfs = {}; this.ws = {}; // pfs / ws: scratch state of the playfield / the weapon
   this.field = VOD.playfields[field] ? field : 'classic'; this.pf = VOD.playfields[this.field].host;
-  this.weapon = opts.weapon && VOD.weapons[opts.weapon] ? opts.weapon : null; this.wd = this.weapon ? VOD.weapons[this.weapon] : null; this.wh = this.wd ? this.wd.host : {};
+  // Weapons: opts.weapons = one weapon id per player, or opts.weapon = the same weapon for everybody; without either there are no weapons. this.weapon is the default (null = weapons off).
+  var wl = Array.isArray(opts.weapons) ? opts.weapons : null;
+  this.weapon = opts.weapon && VOD.weapons[opts.weapon] ? opts.weapon : wl ? (VOD.weapons.gun ? 'gun' : VOD.list('weapons')[0].id) : null;
+  this.whs = this.weapon ? VOD.list('weapons').map(function (d) { return d.host || {}; }) : []; // every weapon's host hooks run, since each player may carry a different one
   this.shipDef = VOD.ships[opts.ship] || VOD.ships.standard;
 
   var L = new b2.Dynamics.b2ContactListener();
@@ -26,6 +29,7 @@ function Host(names, field, opts) {
   };
   this.world.SetContactListener(L);
   this.pf.build(this, names, opts); // the playfield creates its obstacles and buoys and places the ships (helpers below)
+  if (this.weapon) this.ships.forEach(function (s, i) { s.weapon = wl && VOD.weapons[wl[i]] ? wl[i] : self.weapon; });
   this.markDummy(opts);
 }
 
@@ -78,6 +82,12 @@ Host.prototype.sight = function (from, to, ignore) { // first solid thing on the
   this.world.RayCast(function (fix, pt, nrm, fr) { var u = fix.GetBody().GetUserData(); if (fix.IsSensor() || fix.GetBody() === from || (ignore && ignore(u))) return 1; if (!best || fr < best.fr) best = { body: fix.GetBody(), pt: pt, fr: fr }; return fr; }, new V(p.x, p.y), new V(q.x, q.y));
   return { clear: !!best && best.body === to, pt: best && best.pt };
 };
+// A playfield may give ships cover (pf.cover(h, ship) -> 0..1, e.g. how deep it is in a cloud). Other players see the ship fade with it; at K.LOCK and above it cannot be
+// targeted or tracked by missiles; at 1 it is hidden: the other players' snapshots do not show where it is. Cover never affects collisions.
+Host.prototype.cover = function (sh) { return this.pf.cover && !sh.dead ? Math.max(0, Math.min(1, this.pf.cover(this, sh))) : 0; };
+Host.prototype.hidden = function (sh) { return this.cover(sh) >= 1; };
+Host.prototype.seen = function (sh) { return this.cover(sh) < VOD.K.LOCK; };
+Host.prototype.eachWeapon = function (hook) { for (var i = 0; i < this.whs.length; i++) if (this.whs[i][hook]) this.whs[i][hook](this); }; // run one hook of every weapon in play
 Host.prototype.nofire = function (sh, why) { this.events.push({ e: 'nofire', i: sh.i, why: why }); return false; };
 Host.prototype.damage = function (t, d) { // weapon damage; wrecks and freshly respawned ships are immune
   if (t.dead || this.time < t.inv) return;
@@ -108,14 +118,21 @@ Host.prototype.standings = function () { // final results: most buoys first; a t
 };
 
 // The pilot fired (for targeted weapons: at ship number `target`); false when nothing happened.
+// target: a ship number, or { kind, owner } for something in flight (only for weapons that list that kind in `hits`, e.g. the gun can hit a missile).
 Host.prototype.fire = function (i, target) {
-  var sh = this.ships[i];
-  if (!sh || !this.wd || this.over || sh.dead || this.time < (sh.readyAt || 0)) return false;
+  var sh = this.ships[i], wd = sh && sh.weapon && VOD.weapons[sh.weapon];
+  if (!wd || this.over || sh.dead || this.time < (sh.readyAt || 0)) return false;
   var t = null;
-  if (this.wd.targeted) { t = this.ships[target]; if (!t || t === sh || t.dead) return this.nofire(sh, 'no target'); }
-  return this.wh.fire(this, sh, t);
+  if (wd.targeted) {
+    if (target && typeof target === 'object') {
+      t = this.projectiles.filter(function (p) { return p.kind === target.kind && p.owner === target.owner && !p.exploding; })[0];
+      if (!t || t.owner === sh.i) return this.nofire(sh, 'no target');
+      if (!(wd.hits || []).includes(t.kind)) return this.nofire(sh, 'this weapon cannot hit that');
+    } else { t = this.ships[target]; if (!t || t === sh || t.dead) return this.nofire(sh, 'no target'); if (!this.seen(t)) return this.nofire(sh, 'cannot see the target'); }
+  }
+  return wd.host.fire(this, sh, t);
 };
-Host.prototype.detonate = function (i) { return !!(this.wh.detonate && this.wh.detonate(this, i)); }; // weapons with something in flight (missile, mine)
+Host.prototype.detonate = function (i) { var sh = this.ships[i], wd = sh && sh.weapon && VOD.weapons[sh.weapon]; return !!(wd && wd.host.detonate && wd.host.detonate(this, i)); }; // weapons with something in flight (missile, mine)
 
 Host.prototype.contact = function (sh, o) {
   if (this.over || o.projectile) return; // a projectile's damage comes from its own hit() handler
@@ -144,7 +161,7 @@ Host.prototype.after = function () {
       this.events.push({ e: 'boom', i: sh.i, x: p.x * S, y: p.y * S });
     } else if (sh.dead && this.time >= sh.respawnAt && !this.over) this.respawn(sh);
   }
-  if (this.wh.after) this.wh.after(this);
+  this.eachWeapon('after');
 };
 Host.prototype.respawn = function (sh) {
   var V = this.V, b = sh.visited > 0 ? this.buoys[sh.visited - 1] : null, pos = b ? [b.x, b.y] : sh.start;
@@ -181,7 +198,7 @@ Host.prototype.tick = function () {
     self.events.push({ e: 'fire', i: sh.i, x: t[0], y: t[1] });
   });
   if (this.pf.tick) this.pf.tick(this);
-  if (this.wh.tick) this.wh.tick(this);
+  this.eachWeapon('tick');
   this.k++;
 };
 
@@ -189,28 +206,38 @@ Host.prototype.step = function (dt) {
   if (this.over) return;
   this.acc += Math.min(dt, 0.25);
   while (this.acc >= FIX) {
-    this.acc -= FIX; if (this.pf.before) this.pf.before(this); if (this.wh.before) this.wh.before(this); this.world.Step(FIX, 8, 3); this.world.ClearForces(); this.time += FIX; this.after();
+    this.acc -= FIX; if (this.pf.before) this.pf.before(this); this.eachWeapon('before'); this.world.Step(FIX, 8, 3); this.world.ClearForces(); this.time += FIX; this.after();
     if (this.time >= this.nextTick) { this.tick(); this.nextTick += STEP; }
   }
 };
 
 Host.prototype.init = function (you) { // sent once to every player: the static description of the game. pf / w hold what the playfield / weapon add.
-  var d = this.wd || {};
-  return { t: 'init', you: you, field: this.field, W: this.W, H: this.H, weapon: this.weapon, step: STEP, nb: NB, ship: this.shipDef.shape,
-    players: this.ships.map(function (s) { return { name: s.name, color: s.color, dummy: !!s.dummy }; }), targeted: !!d.targeted, wrange: d.range || null,
+  var me = this.ships[you], d = (me && me.weapon && VOD.weapons[me.weapon]) || {}, w = {}; // weapon / targeted / wrange describe the receiving player's own weapon
+  this.whs.forEach(function (wh) { if (wh.init) Object.assign(w, wh.init(this)); }, this);
+  return { t: 'init', you: you, field: this.field, W: this.W, H: this.H, weapon: me && me.weapon || null, thits: d.hits || [], step: STEP, nb: NB, ship: this.shipDef.shape,
+    players: this.ships.map(function (s) { return { name: s.name, color: s.color, dummy: !!s.dummy, weapon: s.weapon || null }; }), targeted: !!d.targeted, wrange: d.range || null,
     buoys: this.buoys.map(function (b) { return [b.n, b.x, b.y]; }),
-    pf: this.pf.init ? this.pf.init(this) : {}, w: this.wh.init ? this.wh.init(this) : {} };
+    pf: this.pf.init ? this.pf.init(this) : {}, w: w };
 };
 
 Host.prototype.snapshot = function () { // 20 times a second to every player. pf / w hold what the playfield / weapon add.
-  var r1 = function (v) { return Math.round(v * 10) / 10; }, r3 = function (v) { return Math.round(v * 1000) / 1000; }, ev = this.events; this.events = [];
+  var r1 = function (v) { return Math.round(v * 10) / 10; }, r3 = function (v) { return Math.round(v * 1000) / 1000; }, ev = this.events, w = {}; this.events = [];
+  this.whs.forEach(function (wh) { if (wh.snapshot) Object.assign(w, wh.snapshot(this)); }, this); // each weapon adds its own keys
   return { t: 'snap', k: this.k, ht: this.time, tin: Math.round((this.nextTick - this.time) * 1000), ev: ev,
     ships: this.ships.map(function (s) {
       var p = s.body.GetPosition(), v = s.body.GetLinearVelocity();
       return { x: r1(p.x * S), y: r1(p.y * S), a: s.body.GetAngle(), vx: r3(v.x * S), vy: r3(v.y * S),
                hp: Math.round(s.hp), n: s.visited, dead: s.dead, inv: this.time < s.inv, zc: s.zc, cd: Math.max(0, (s.readyAt || 0) - this.time), rs: s.dead ? Math.max(0, s.respawnAt - this.time) : 0, q: s.q.map(function (a) { return a.slice(); }) }; }, this),
+    cov: this.pf.cover ? this.ships.map(function (s) { return Math.round(this.cover(s) * 20) / 20; }, this) : null,
     pw: this.ships.map(this.power, this),
-    pf: this.pf.snapshot ? this.pf.snapshot(this) : {}, w: this.wh.snapshot ? this.wh.snapshot(this) : {} };
+    pf: this.pf.snapshot ? this.pf.snapshot(this) : {}, w: w };
+};
+
+Host.prototype.snapshotFor = function (s, j) { // the snapshot as player j may see it: other ships carry their cover as `fog`; fully hidden ones show no position, speed or planned thrusts
+  if (!s.cov) return s;
+  var out = Object.assign({}, s);
+  out.ships = s.ships.map(function (sh, i) { var c = i === j ? 0 : s.cov[i]; if (c > 0 && c < 1) return Object.assign({}, sh, { fog: c }); return c >= 1 ? { hid: true, x: 0, y: 0, a: 0, vx: 0, vy: 0, hp: sh.hp, n: sh.n, dead: false, inv: false, zc: 0, cd: 0, rs: 0, q: [[0, 0], [0, 0]] } : sh; });
+  out.cov = null; return out;
 };
 
 VOD.Host = Host;

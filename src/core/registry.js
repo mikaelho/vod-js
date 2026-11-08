@@ -2,8 +2,8 @@
 // A module file calls VOD.ship(id, def), VOD.playfield(id, def) or VOD.weapon(id, def); build.py includes every file in those folders, nothing else to edit.
 (function () {
   var VOD = globalThis.VOD = { K: {}, u: {}, ships: {}, playfields: {}, weapons: {} };
-  VOD.K = { S: 30, STEP: 3, W: 2100, H: 1300, CELL: 100, NB: 5, POWER: 100, WEAPON_CD: 4, FIX: 1 / 60, COLORS: ['cyan', 'magenta', 'lightgreen', 'yellow', 'orange'] };
-  // S: pixels per physics metre. STEP: seconds between thrust locks (the "tick"). W, H: default playfield size. FIX: physics step.
+  VOD.K = { S: 30, STEP: 3, W: 2100, H: 1300, CELL: 100, NB: 5, POWER: 100, WEAPON_CD: 4, FIX: 1 / 60, LOCK: .6, COLORS: ['cyan', 'magenta', 'lightgreen', 'yellow', 'orange'] };
+  // LOCK: a ship with cover (e.g. cloud) at or above this cannot be targeted or tracked by missiles. S: pixels per physics metre. STEP: seconds between thrust locks (the "tick"). W, H: default playfield size. FIX: physics step.
   VOD.u = {
     mulberry: function (a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }, // seeded random numbers
     rnd: function (a, b) { return a + Math.random() * (b - a); },

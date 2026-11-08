@@ -24,7 +24,7 @@ VOD.weapon('harpoon', {
     fx: function (f, now) { // a rope between the two ships that goes slack as they close in
       if (f.e !== 'harpoon') return;
       const a = 1 - (now - f.at) / 600; if (a <= 0 || !snaps.length) return;
-      const I = interp(now - 100), s1 = I.ships[f.i], s2 = I.ships[f.t]; if (!s1 || !s2) return;
+      const I = interp(now - 100), s1 = I.ships[f.i], s2 = I.ships[f.t]; if (!s1 || !s2 || s1.hid || s2.hid) return;
       ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, 2 / sc); ctx.setLineDash([10 / sc, 6 / sc]); ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke(); ctx.setLineDash([]);
       ctx.fillStyle = '#fff'; circle(s2.x, s2.y, 7 + 8 * (1 - a)); ctx.fill(); ctx.restore();
     }

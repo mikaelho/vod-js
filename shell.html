@@ -8,8 +8,8 @@
  :root{--ac:#cfd4da;--ac2:#eef0f2;--line:#3b4048;--mut:#8f969f;--card:rgba(255,255,255,.045)}
  html,body{margin:0;height:100%;overflow:hidden;background:#000 url(assets/spacetile2.png);color:#fff;font-family:Optima,Helvetica,sans-serif;touch-action:none}
  canvas{position:fixed;inset:0;width:100%;height:100%}
- #hud{position:absolute;top:8px;left:10px;font-size:15px;line-height:1.5;pointer-events:none;text-shadow:0 0 4px #000}
- #vb button{font:inherit;padding:8px 12px;border-radius:6px;border:1px solid var(--ac);background:rgba(207,212,218,.08);color:var(--ac);cursor:pointer}
+ #hud{position:absolute;bottom:calc(10px + env(safe-area-inset-bottom,0px));left:12px;max-width:62vw;font-size:clamp(17px,2.4vw,24px);line-height:1.45;pointer-events:none;text-shadow:0 0 5px #000,0 0 2px #000} #hud small{font-size:.6em;opacity:.7} @media(max-width:600px){#hud small.note{display:none}} #hud .hrow{margin-bottom:8px} #hud .hbar{width:clamp(130px,16vw,200px);height:10px;border:1px solid #fff;margin-top:3px;border-radius:2px;overflow:hidden} #hud .hbar i{display:block;height:100%} #hud .hdots{display:flex;gap:7px;margin-top:5px} #hud .hdots b{width:1.5em;height:1.5em;border:2px solid #fff;border-radius:50%;box-sizing:border-box;font-size:.7em;font-weight:600;line-height:calc(1.5em - 4px);text-align:center;text-shadow:none} #hud .hdots b.on{color:#0e1013}
+ #vb button{font:inherit;padding:8px 12px;border-radius:6px;border:1px solid var(--ac);background:color-mix(in srgb,var(--ac) 12%,rgba(0,0,0,.4));color:var(--ac);cursor:pointer}
  /* start dialog */
  #lobby{position:absolute;inset:0;background:rgba(0,0,0,.84);display:flex;align-items:center;justify-content:center;overflow:auto}
  #box{width:min(720px,94vw);padding:18px 0;box-sizing:border-box}
@@ -25,7 +25,7 @@
  .chk{display:flex;align-items:center;gap:8px;font-size:15px;color:#fff;letter-spacing:normal;text-transform:none;min-height:42px} .chk input{width:auto} .chk.dim{color:var(--mut);font-style:italic}
  #vb #bfire{font-weight:600;background:var(--ac);color:#0e1013} #vb #bfire:disabled{opacity:.45;cursor:default}
  #vb #bfire.armed{background:rgba(255,255,255,.12);color:#fff;box-shadow:0 0 0 2px var(--ac) inset}
- #toast{position:fixed;left:50%;bottom:calc(72px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:8px 14px;border-radius:8px;font-size:14px;display:none;z-index:4;pointer-events:none}
+ #toast{border:1px solid var(--ac);position:fixed;left:50%;bottom:calc(72px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:8px 14px;border-radius:8px;font-size:14px;display:none;z-index:4;pointer-events:none}
  .badges{display:flex;gap:8px;flex-wrap:wrap}
  .btn:hover{background:var(--ac2)} .btn.sec{background:transparent;color:var(--ac)} .btn.sec:hover{background:rgba(207,212,218,.12)}
  #grid{display:grid;grid-template-columns:3fr 2fr;gap:14px;margin-top:14px}

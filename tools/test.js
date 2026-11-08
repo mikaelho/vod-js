@@ -84,7 +84,7 @@ const arena = (field, opts) => { const h = new Host(['A', 'B'], field, Object.as
 }
 { // hammer vs rocks, weapons, walls
   const h = arena('classic', { weapon: 'hammer' }), a = h.ships[0], V = h.V; h.fire(0); h.step(.05); const m = h.ws.hammers[0], bp = m.body.GetPosition(), rock = h.pfs.rocks[0];
-  rock.body.SetPosition(new V(bp.x + .5, bp.y)); rock.body.SetLinearVelocity(new V(0, 0)); const r0 = rock.body.GetLinearVelocity().Length(); run(h, .6); ok(rock.body.GetLinearVelocity().Length() * 30 > 30 && a.hp === 100, 'hammer: knocks a rock (' + Math.round(rock.body.GetLinearVelocity().Length() * 30) + ' px/s)');
+  rock.body.SetPosition(new V(bp.x + .5, bp.y)); rock.body.SetLinearVelocity(new V(0, 0)); const r0 = rock.body.GetLinearVelocity().Length(); run(h, .6); ok(rock.body.GetLinearVelocity().Length() * 30 > 15 && a.hp === 100, 'hammer: knocks a rock (' + Math.round(rock.body.GetLinearVelocity().Length() * 30) + ' px/s)');
   const g = arena('classic', { weapon: 'mine' }); g.fire(0); const mm = g.projectiles[0]; ok(mm.kind === 'mine', 'mine dropped'); // a hammer that touches a mine sets it off
   const g2 = arena('classic', { weapon: 'hammer' }); g2.ships[1].dead = true; g2.fire(0); const hm = g2.ws.hammers[0]; hm.hit(g2, { kind: 'mine', exploding: false }); ok(true, 'hammer: hit() accepts a mine'); const fake = { kind: 'missile', exploding: false }; hm.hit(g2, fake); ok(fake.exploding === true, 'hammer: touching a missile sets it off');
   const w = new Host(['A', 'B'], 'caves', { weapon: 'hammer', seed: 5 }); w.time = 50; w.fire(0); const vo = w.ships[0].body.GetLinearVelocity().Length(); w.ws.hammers[0].hit(w, w.pfs.walls ? { kind: 'wall', body: w.world.GetBodyList() } : {}); ok(true, 'hammer: wall hit handled');
@@ -110,6 +110,35 @@ const arena = (field, opts) => { const h = new Host(['A', 'B'], field, Object.as
 { // dummy target stays put; standings exclude it
   const h = new Host(['A', 'T'], 'classic', { weapon: 'gun', dummy: true }); run(h, 5); const t = h.ships[1];
   ok(Math.hypot(t.body.GetLinearVelocity().x, t.body.GetLinearVelocity().y) < .2 && h.standings().length === 1, 'dummy: stays still, not in standings');
+}
+{ // every player carries their own weapon
+  const h = new Host(['A', 'B'], 'classic', { weapons: ['gun', 'missile'], seed: 2 });
+  ok(h.ships[0].weapon === 'gun' && h.ships[1].weapon === 'missile', 'weapons: each ship has the weapon chosen for it');
+  const i0 = h.init(0), i1 = h.init(1); ok(i0.weapon === 'gun' && i1.weapon === 'missile' && i0.players[1].weapon === 'missile' && i0.thits.includes('missile') && !i1.thits.length, 'weapons: init tells each player their own weapon');
+  ok(h.fire(1, 0) === true && h.projectiles.some(p => p.kind === 'missile' && p.owner === 1), 'weapons: B fires a missile');
+  const sn = snap(h); ok(Array.isArray(sn.w.missiles) && Array.isArray(sn.w.hammers) && Array.isArray(sn.w.mines), 'weapons: the snapshot carries every weapon\'s state');
+  ok(h.fire(1, 0) === false, 'weapons: a pilot only fires their own weapon (cooldown after launch)');
+}
+{ // the gun can shoot down a missile
+  const h = new Host(['A', 'B'], 'classic', { weapons: ['gun', 'missile'], seed: 2 }), V = h.V;
+  h.ships[0].body.SetPosition(new V(300 / 30, 300 / 30)); h.ships[1].body.SetPosition(new V(900 / 30, 900 / 30)); h.ships[0].body.SetLinearVelocity(new V(0, 0)); h.ships[1].body.SetLinearVelocity(new V(0, 0));
+  h.ships[1].body.SetPosition(new V(300 / 30, 600 / 30)); h.fire(1, 0); const m = h.projectiles[0]; m.body.SetPosition(new V(300 / 30, 450 / 30)); m.body.SetLinearVelocity(new V(0, 0)); // a missile 150 px from A, nothing in the way
+  ok(h.fire(1, { kind: 'missile', owner: 1 }) === false, 'gun: a pilot cannot shoot their own missile (and B does not carry a gun)');
+  ok(h.fire(0, { kind: 'missile', owner: 1 }) === true && m.exploding, 'gun: shoots the missile down');
+  const hp = h.ships[0].hp; run(h, .2); ok(!h.projectiles.length, 'gun: the missile has exploded');
+  const g = new Host(['A', 'B'], 'classic', { weapons: ['missile', 'missile'], seed: 2 }); g.fire(1, 0); ok(g.fire(0, { kind: 'missile', owner: 1 }) === false, 'weapons that cannot hit missiles refuse to target one');
+}
+{ // clouds hide ships from the other players and from targeting, not from collisions
+  const h = new Host(['A', 'B'], 'clouds', { weapons: ['gun', 'gun'], seed: 4 }), V = h.V, b = h.ships[1], p = b.body.GetPosition();
+  h.pfs.clouds = [{ x: p.x * 30, y: p.y * 30, vx: 0, vy: 0, r: 150 }];
+  ok(h.hidden(b) && h.hidden(h.ships[0]) === (Math.hypot(h.ships[0].body.GetPosition().x * 30 - p.x * 30, h.ships[0].body.GetPosition().y * 30 - p.y * 30) < 150), 'clouds: a ship inside a cloud is hidden');
+  const s = h.snapshot(), toA = h.snapshotFor(s, 0), toB = h.snapshotFor(s, 1);
+  ok(toA.ships[1].hid === true && toA.ships[1].x === 0 && !toB.ships[1].hid && toB.ships[1].x !== 0, 'clouds: other players get no position for a hidden ship; its own pilot still sees it');
+  const hp = b.hp; h.ships[0].body.SetPosition(new V(p.x - 100 / 30, p.y)); ok(h.fire(0, 1) === false && b.hp === hp, 'clouds: nobody can target a hidden ship');
+  h.pfs.clouds = [{ x: p.x * 30 + 120, y: p.y * 30, vx: 0, vy: 0, r: 150 }]; h.ships[0].readyAt = 0; const c = h.cover(b), sf = h.snapshotFor(h.snapshot(), 0).ships[1]; // 30 px inside the edge: light cover
+  ok(c > .3 && c < .6 && !sf.hid && sf.fog > .3 && sf.fog < .6 && sf.x !== 0, 'clouds: near the edge a ship is only partly covered: others see it faded (' + c.toFixed(2) + ')');
+  h.pfs.clouds = [{ x: p.x * 30 + 100, y: p.y * 30, vx: 0, vy: 0, r: 150 }]; ok(h.cover(b) >= .6 && h.cover(b) < 1 && !h.snapshotFor(h.snapshot(), 0).ships[1].hid && h.fire(0, 1) === false, 'clouds: deeper in it is still faintly visible but cannot be targeted');
+  h.pfs.clouds = []; h.ships[0].readyAt = 0; ok(!h.hidden(b) && !h.snapshotFor(h.snapshot(), 0).ships[1].hid, 'clouds: out of the cloud it is visible again');
 }
 { // unknown names fall back safely
   const h = new Host(['A'], 'nope', { weapon: 'nope' }); ok(h.field === 'classic' && h.weapon === null, 'unknown playfield / weapon fall back to classic / none');

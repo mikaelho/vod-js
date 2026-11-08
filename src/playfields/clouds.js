@@ -1,9 +1,11 @@
 // Playfield "Clouds": drifting, overlapping circular clouds cover about half of the field. A ship inside a cloud when a thrust fires (every 3 s) first loses 50% of its velocity, and the thrust itself is cut by 50% too.
-// Overlaps do not stack. Cloud positions are a pure function of the host's clock (straight drift, bouncing off the edges of the field), so the client can predict them for the route preview.
+// Clouds also give cover, gradually: going in, a ship fades from the other players' view, cannot be targeted or tracked by missiles from 60% cover on, and in the dense middle it disappears completely; it can still collide with things. Overlaps do not stack. Cloud positions are a pure function of the host's clock (straight drift, bouncing off the edges of the field), so the client can predict them for the route preview.
 (function () {
 var K = VOD.K, W = K.W, H = K.H, NB = K.NB, rnd = VOD.u.rnd, pick = VOD.u.pick, KEEP = .5, SLOW = { v: KEEP, t: KEEP }, ONE = { v: 1, t: 1 }, COVER = .5, RMIN = 120, RMAX = 260;
 var bounce = function (v, L) { var m = (v % (2 * L) + 2 * L) % (2 * L); return m <= L ? m : 2 * L - m; }; // a straight run that reflects off 0 and L
 var at = function (c, t) { return [bounce(c.x + c.vx * t, W), bounce(c.y + c.vy * t, H)]; }; // where cloud c (its centre) is at host time t: it bounces off the edges of the field
+var FEATHER = .45; // cover grows from 0 at a cloud's edge to full at this fraction of its radius inside
+var coverAt = function (clouds, x, y, t) { var clear = 1; clouds.forEach(function (c) { var p = at(c, t), d = Math.hypot(p[0] - x, p[1] - y); if (d < c.r) clear *= 1 - Math.min(1, (c.r - d) / (FEATHER * c.r)); }); return 1 - clear; }; // overlapping clouds add up
 var inside = function (clouds, x, y, t) { return clouds.some(function (c) { var p = at(c, t); return Math.hypot(p[0] - x, p[1] - y) < c.r; }); };
 // Clouds are added until the average cover over the first
 // 10 minutes reaches 50%, and a layout is only accepted if the cover stays between 40% and 65% in that time (the best of 80 tries otherwise).
@@ -39,6 +41,7 @@ VOD.playfield('clouds', {
       h.placeShips(names, starts, bu1);
     },
     drag: function (h, sh) { var p = sh.body.GetPosition(); return inside(h.pfs.clouds, p.x * K.S, p.y * K.S, h.time) ? SLOW : ONE; }, // velocity and thrust factors applied just before each thrust fires
+    cover: function (h, sh) { var p = sh.body.GetPosition(); return coverAt(h.pfs.clouds, p.x * K.S, p.y * K.S, h.time); }, // gradual: fades for the other players, untargetable deeper in, gone in the dense middle (never for collisions)
     init: function (h) { return { clouds: h.pfs.clouds }; }
   },
   client: {
@@ -46,7 +49,7 @@ VOD.playfield('clouds', {
     draw: function (G, I) {
       G.pf.clouds.forEach(c => {
         const p = at(c, I.th), x = p[0], y = p[1], g = ctx.createRadialGradient(x, y, 0, x, y, c.r);
-        g.addColorStop(0, 'rgba(160,185,225,.26)'); g.addColorStop(.8, 'rgba(160,185,225,.26)'); g.addColorStop(1, 'rgba(160,185,225,0)');
+        g.addColorStop(0, 'rgba(160,185,225,.3)'); g.addColorStop(1 - FEATHER, 'rgba(160,185,225,.3)'); g.addColorStop(.8, 'rgba(160,185,225,.17)'); g.addColorStop(1, 'rgba(160,185,225,.03)'); // denser where the cover is
         ctx.fillStyle = g; circle(x, y, c.r); ctx.fill();
       });
     }

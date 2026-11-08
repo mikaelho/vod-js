@@ -1,7 +1,7 @@
 // ---------- client: state, input ----------
 const clock = { off: null };
 function onHostMsg(m) {
-  if (m.t === 'init') { resetGameState(); G = m; me = m.you; $('lobby').style.display = 'none'; return; }
+  if (m.t === 'init') { resetGameState(); G = m; me = m.you; ['vb', 'hud', 'toast'].forEach(id => $(id).style.setProperty('--ac', m.players[me].color)); $('lobby').style.display = 'none'; return; }
   if (m.t !== 'snap') return;
   const now = performance.now(), smp = m.ht * 1000 - now; m.at = now; m.tickH = m.ht + m.tin / 1000; // next lock, in host game time
   clock.off = clock.off === null ? smp : clock.off + (smp - clock.off) * .05; // low-pass: arrival-time jitter must not move anything on screen
@@ -11,7 +11,8 @@ function onHostMsg(m) {
     if (e.e === 'respawn' && e.i === me) { view.z = Math.min(8, .9 / base()); view.cx = e.x; view.cy = e.y; } } }); // my ship is back: zoom to it
 }
 const latest = () => snaps[snaps.length - 1];
-const PFC = () => VOD.playfields[G.field].client || {}, WC = () => (G.weapon && VOD.weapons[G.weapon].client) || {}; // the playfield's and the weapon's client hooks
+const PFC = () => VOD.playfields[G.field].client || {}, WC = () => (G.weapon && VOD.weapons[G.weapon].client) || {}; // the playfield's and my own weapon's client hooks
+const AW = () => G && G.weapon ? VOD.list('weapons').map(d => d.client || {}) : []; // every weapon's client hooks: anybody's shot, missile or mine has to be drawn and heard
 function accel(x, y, T) { const p = PFC(); return p.accel ? p.accel(G, x, y, T) : [0, 0]; } // gravity (px/s^2) at host time T, same formula as the host uses
 function fly(st, T, dur, pts) { // integrate dur seconds from [x, y, vx, vy] at host time T, optionally collecting the path
   const n = Math.max(1, Math.ceil(dur * 60)), h = dur / n; let [x, y, vx, vy] = st; // 1/60 s steps, same as the host's physics
@@ -31,9 +32,10 @@ function fireWeapon() { // the Fire button or the space bar
 }
 function tapTarget(e) { // while armed, a tap on an enemy ship designates it and fires
   if (!G || snaps.length < 2) return false;
-  const I = interp(performance.now() - 100), wx = (e.clientX - ox) / sc, wy = (e.clientY - oy) / sc, r = Math.max(30, 44 / sc); let best = -1, bd = 1e9;
-  I.ships.forEach((sh, i) => { if (i === me || sh.dead) return; const d = Math.hypot(sh.x - wx, sh.y - wy); if (d < r && d < bd) { bd = d; best = i; } });
-  if (best < 0) return false;
+  const I = interp(performance.now() - 100), wx = (e.clientX - ox) / sc, wy = (e.clientY - oy) / sc, r = Math.max(30, 44 / sc); let best = null, bd = 1e9;
+  I.ships.forEach((sh, i) => { if (i === me || sh.dead || sh.hid || (sh.fog || 0) >= VOD.K.LOCK) return; const d = Math.hypot(sh.x - wx, sh.y - wy); if (d < r && d < bd) { bd = d; best = i; } });
+  if (G.thits.includes('missile')) (I.w.missiles || []).forEach(m => { if (m[2] === me) return; const d = Math.hypot(m[0] - wx, m[1] - wy); if (d < r && d < bd) { bd = d; best = { kind: 'missile', owner: m[2] }; } }); // a missile in flight can be tapped too, if my weapon can hit it
+  if (best === null) return false;
   armed = false; sendFire(best); return true;
 }
 $('bfire').onclick = fireWeapon;
@@ -68,6 +70,7 @@ function setThird(e) {
 const view = { z: 1, cx: null, cy: null }, ptrs = new Map(); let mode = null, buoyFx = -1e9;
 // Everything a game leaves behind on this page. Called whenever a game starts (and when leaving one), so nothing carries over from the previous game.
 function resetGameState() {
+  ['vb', 'hud', 'toast'].forEach(id => $(id).style.removeProperty('--ac'));
   G = null; snaps = []; fx = []; local = null; over = null; armed = false; pressed = false; lastSend = 0; buoyFx = -1e9;
   view.z = 1; view.cx = null; view.cy = null; clock.off = null; ptrs.clear(); mode = null; hideResults();
 }
@@ -76,7 +79,7 @@ function zoomAt(x, y, f) { const wx = (x - ox) / sc, wy = (y - oy) / sc; view.z 
   view.cx = wx - (x - vw() / 2) / s2; view.cy = wy - (y - vh() / 2) / s2; }
 function hitThrust(e) { if (!G || snaps.length < 2 || over || latest().ships[me].dead) return false; const P = plan();
   return Math.hypot(e.clientX - (P.H[FREE][0] * sc + ox), e.clientY - (P.H[FREE][1] * sc + oy)) < 70 || Math.hypot(e.clientX - (P.C[FREE][0] * sc + ox), e.clientY - (P.C[FREE][1] * sc + oy)) < Math.max(P.pw * P.tf[FREE] * sc * 1.3, 80); }
-$('c').addEventListener('wheel', e => { e.preventDefault(); if (G) zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15); }, { passive: false });
+$('c').addEventListener('wheel', e => { e.preventDefault(); if (G) zoomAt(e.clientX, e.clientY, Math.exp(-Math.max(-100, Math.min(100, e.deltaY * (e.deltaMode === 1 ? 33 : 1))) * (e.ctrlKey ? .006 : .0007))); }, { passive: false });
 $('c').addEventListener('pointerdown', e => { if (armed && tapTarget(e)) return; ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY }); try { $('c').setPointerCapture(e.pointerId); } catch (_) {}
   if (ptrs.size === 1) { if (hitThrust(e)) { mode = 'thrust'; setThird(e); } else mode = 'pan'; } else mode = 'pinch'; });
 $('c').addEventListener('pointermove', e => { const o = ptrs.get(e.pointerId); if (!o || !G) return;

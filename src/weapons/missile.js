@@ -8,7 +8,7 @@ var isProjectile = function (u) { return u && u.projectile; };
 var mine = function (h, i) { return h.projectiles.filter(function (m) { return m.kind === 'missile' && m.owner === i; }); };
 
 function steer(h, m) { // a guidance pulse: with a clear view of the target, thrust flat out in the direction that cancels the sideways drift and closes in
-  var t = h.ships[m.target]; if (!t || t.dead || !h.sight(m.body, t.body, isProjectile).clear) return; // otherwise coast
+  var t = h.ships[m.target]; if (!t || t.dead || !h.seen(t) || !h.sight(m.body, t.body, isProjectile).clear) return; // otherwise coast
   var V = h.V, p = m.body.GetPosition(), q = t.body.GetPosition(), v = m.body.GetLinearVelocity(), tv = t.body.GetLinearVelocity(), dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy) || 1;
   var nx = dx / len * MISSILE.speed / S - (v.x - tv.x), ny = dy / len * MISSILE.speed / S - (v.y - tv.y), nl = Math.hypot(nx, ny) || 1, k = MISSILE.dv * MISSILE.every / STEP / S * m.body.GetMass(); // wanted change of velocity gives the direction; the pulse is limited to the engine's budget
   m.body.ApplyImpulse(new V(nx / nl * k, ny / nl * k), m.body.GetWorldCenter());
