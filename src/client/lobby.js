@@ -54,16 +54,17 @@ function startPeer(kind, id, ready) {
   if (kind === 'local' && typeof BroadcastChannel === 'undefined') { msg('This browser cannot connect players here.', 'err'); return; }
   const rc = relayConfig(); let opened = false, dead = false, tm;
   const fail = why => { if (dead) return; dead = true; clearTimeout(tm); try { p.destroy(); } catch (_) {} msg((kind === 'relay' ? 'Could not connect to the relay: ' : 'Connection error: ') + why + '.', 'err'); };
-  const p = peer = kind === 'relay' ? new RelayPeer(id, { base: rc.base, key: rc.key, room: 'g-' + gameCode() }) : new LocalPeer(id);
+  const p = peer = kind === 'relay' ? new RelayPeer(id, { base: rc.base, key: rc.key, host: rc.host, room: 'g-' + gameCode() }) : new LocalPeer(id);
   tm = setTimeout(() => { if (!opened) fail('no answer in 20 seconds'); }, 20000); // the transport itself retries a few times within this
-  p.on('open', i => { if (dead) return; opened = true; clearTimeout(tm); netNote = 'Connection: ' + (kind === 'relay' ? 'relay (' + rc.host + ')' : 'same browser only (development)'); msg(''); ready(i); });
+  p.on('open', i => { if (dead) return; opened = true; clearTimeout(tm); netNote = 'Connection: ' + (kind === 'relay' ? 'relay (' + rc.host + ')' + (p.protocol < 2 ? ' - an older relay version: redeploy it for faster reconnects' : '') : 'same browser only (development)'); msg(''); ready(i); });
   p.on('error', e => {
     if (dead) return;
     if (e.type === 'unavailable-id') { dead = true; clearTimeout(tm); msg('The game ID "' + gameCode() + '" is already in use. Pick another ID.', 'err'); }
     else if (e.type === 'peer-unavailable' && joinRetry && joinRetry()) return; // the host may just be reconnecting: try again a few times
     else if (e.type === 'peer-unavailable') msg('No game found with the ID "' + gameCode() + '". Check the ID, and that the host has pressed Host game.' + (!rc ? ' To play with others, open this page with the relay address and key.' : ''), 'err');
-    else if (!opened) fail(e.type === 'relay-refused' ? 'the secret is wrong, or the relay is unreachable' : e.type || 'error'); else msg('Network error (' + e.type + ').', 'err');
+    else if (!opened) fail(e.problem || (e.type === 'relay-refused' ? 'the secret is wrong, or the relay is unreachable' : e.type || 'error')); else msg('Network error (' + e.type + ').', 'err');
   });
+  p.on('problem', why => { if (dead) return; msg((opened ? 'Reconnecting to the relay: ' : 'Still trying to connect: ') + why + '.'); }); // from the relay's /check, when connecting keeps failing
   p.on('reconnecting', () => { if (opened) msg('Connection to the relay lost, reconnecting...'); });
   p.on('reconnected', () => { if (opened) { msg(''); lobbyTick(); } });
   p.on('disconnected', () => { if (opened) msg('Lost the connection to the relay and could not get it back. Reload the page to try again.', 'err'); });

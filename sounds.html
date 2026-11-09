@@ -1,0 +1,925 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VoD sounds</title>
+<style>
+:root{--bg:#0e1013;--card:#171a1f;--line:#2c3138;--tx:#e6e9ec;--mut:#8f969f;--a:#6fd3ff;--b:#ffb86b}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,sans-serif;padding:16px 16px 60px;max-width:900px;margin:auto}
+h1{font-size:20px;margin:6px 0 2px} p{color:var(--mut);margin:4px 0 14px} h2{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);margin:26px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.bar{position:sticky;top:0;background:var(--bg);padding:8px 0;display:flex;gap:14px;align-items:center;z-index:2;border-bottom:1px solid var(--line)}
+.row{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;display:grid;grid-template-columns:1fr auto;gap:8px 12px;align-items:center}
+.nm{font-weight:600} .ds{color:var(--mut);font-size:13px} .bt{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+button{font:inherit;border:1px solid var(--a);background:transparent;color:var(--a);padding:7px 12px;border-radius:6px;cursor:pointer} button:hover{background:rgba(111,211,255,.12)}
+button.alt{border-color:var(--b);color:var(--b)} button.alt:hover{background:rgba(255,184,107,.12)} button.ab{border-color:var(--line);color:var(--tx)}
+@media(max-width:600px){.row{grid-template-columns:1fr}.bt{justify-content:flex-start}}
+</style></head><body>
+<h1>VoD sound effects</h1><p>Blue = the sound as it is in the game now (this page runs the game's own sound code). Orange = alternates to compare. "A then B" plays both one after the other.</p>
+<div class="bar"><label>Volume <input id="vol" type="range" min="0" max="1" step=".05" value=".8"></label><label>Distance <select id="dist"><option value="1">own / near (1.0)</option><option value=".5">far (0.5)</option><option value=".25">very far (0.25)</option></select></label></div>
+<div id="list"></div>
+<script>
+const $ = id => { const e = document.getElementById(id); return e || { style: {}, textContent: '', onclick: null }; };
+let G = null, me = 0, snaps = [], latest = () => null, WC = () => ({}), PFC = () => ({}), AW = () => [];
+// VoD registry: shared constants, small helpers, and the three plug-in lists (ships, playfields, weapons). See src/README.md.
+// A module file calls VOD.ship(id, def), VOD.playfield(id, def) or VOD.weapon(id, def); build.py includes every file in those folders, nothing else to edit.
+(function () {
+  var VOD = globalThis.VOD = { K: {}, u: {}, ships: {}, playfields: {}, weapons: {} };
+  VOD.K = { S: 30, STEP: 3, W: 2100, H: 1300, CELL: 100, NB: 5, POWER: 100, WEAPON_CD: 4, FIX: 1 / 60, COLORS: ['cyan', 'magenta', 'lightgreen', 'yellow', 'orange'] };
+  // S: pixels per physics metre. STEP: seconds between thrust locks (the "tick"). W, H: default playfield size. FIX: physics step.
+  VOD.u = {
+    mulberry: function (a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }, // seeded random numbers
+    rnd: function (a, b) { return a + Math.random() * (b - a); },
+    pick: function (arr) { return arr.splice(Math.floor(Math.random() * arr.length), 1)[0]; }, // removes and returns a random element
+    hull: function (p) { // convex hull (monotone chain)
+      p = p.slice().sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
+      var cr = function (o, a, b) { return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0]); }, lo = [], up = [], i;
+      for (i = 0; i < p.length; i++) { while (lo.length > 1 && cr(lo[lo.length-2], lo[lo.length-1], p[i]) <= 0) lo.pop(); lo.push(p[i]); }
+      for (i = p.length - 1; i >= 0; i--) { while (up.length > 1 && cr(up[up.length-2], up[up.length-1], p[i]) <= 0) up.pop(); up.push(p[i]); }
+      lo.pop(); up.pop(); return lo.concat(up);
+    }
+  };
+  var reg = function (kind) { return function (id, def) { def.id = id; def.order = def.order || 50; VOD[kind][id] = def; return def; }; };
+  VOD.ship = reg('ships'); VOD.playfield = reg('playfields'); VOD.weapon = reg('weapons');
+  VOD.list = function (kind) { return Object.keys(VOD[kind]).map(function (k) { return VOD[kind][k]; }).sort(function (a, b) { return a.order - b.order || (a.id < b.id ? -1 : 1); }); };
+})();
+
+// Weapon "Gun": instant hit on the designated ship if it is within range and in the clear; weak, with half the usual cooldown. VOD.weapon(id, def) - see src/README.md.
+(function () {
+var S = VOD.K.S, RANGE = 320, DMG = 25, CD = VOD.K.WEAPON_CD / 2;
+var clearOf = function (t) { return function (u) { return u && u.projectile && u !== t; }; }; // projectiles do not block the shot, except the target itself
+
+VOD.weapon('gun', {
+  label: 'Gun', order: 10,
+  targeted: true,   // the pilot arms it, then taps the target ship; host.fire(i, target) gets that ship
+  range: RANGE,     // shown to the pilot as a circle while aiming
+  hits: ['missile'], // besides ships, it can shoot down a missile in flight (the pilot taps the missile)
+  host: {
+    fire: function (h, sh, t) { // called only when the pilot is alive and off cooldown; return true when fired (and set sh.readyAt), or h.nofire(sh, 'reason')
+      var V = h.V, p = sh.body.GetPosition(), q = t.body.GetPosition(), x = p.x * S, y = p.y * S, dx = q.x * S - x, dy = q.y * S - y, len = Math.hypot(dx, dy) || 1;
+      if (len > RANGE) return h.nofire(sh, 'out of range');
+      var r = h.sight(sh.body, t.body, clearOf(t));
+      if (!r.clear) return h.nofire(sh, 'no line of sight');
+      if (t.kind === 'missile') { t.exploding = true; h.events.push({ e: 'shot', i: sh.i, x1: Math.round(x), y1: Math.round(y), x2: Math.round(q.x * S), y2: Math.round(q.y * S), hit: true }); sh.readyAt = h.time + CD; return true; } // shot down: it explodes where it is
+      h.damage(t, DMG); t.body.ApplyImpulse(new V(dx / len * .15, dy / len * .15), t.body.GetWorldCenter()); // a small shove
+      h.events.push({ e: 'shot', i: sh.i, x1: Math.round(x), y1: Math.round(y), x2: Math.round(r.pt.x * S), y2: Math.round(r.pt.y * S), hit: true });
+      sh.readyAt = h.time + CD; return true;
+    }
+  },
+  client: {
+    sound: function (e, v, T) { if (e.e !== 'shot') return; const c = SND.ctx, t = c.currentTime, o = c.createOscillator(), g = c.createGain(); // the minimal laser: a short sine zap sliding from 1200 to 300 Hz in 80 ms
+      o.type = 'sine'; o.frequency.setValueAtTime(1200, t); o.frequency.exponentialRampToValueAtTime(300, t + .08); g.gain.setValueAtTime(.25 * v, t); g.gain.exponentialRampToValueAtTime(.001, t + .08); o.connect(g); g.connect(SND.master); o.start(t); o.stop(t + .09); },
+    fx: function (f, now) { // draws one host event (f.e, f.at = arrival time) per frame; events live 0.7 s
+      if (f.e !== 'shot') return;
+      const a = 1 - (now - f.at) / 260; if (a <= 0) return; // gun tracer
+      ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, 2 / sc); ctx.beginPath(); ctx.moveTo(f.x1, f.y1); ctx.lineTo(f.x2, f.y2); ctx.stroke();
+      if (f.hit) { ctx.fillStyle = '#fff'; circle(f.x2, f.y2, 8 + 10 * (1 - a)); ctx.fill(); } ctx.restore();
+    }
+  }
+});
+})();
+
+// Weapon "Hammer": a heavy ball whirling round the ship on a tether. Not out at the start: the Fire button deploys it, and retracts it again (no cooldown).
+// It takes no damage; a ship it strikes loses hull (dmg % at full swing speed). It hits everything except buoys: a ship is knocked by the swing (its velocity changes, physics-style) and loses its planned thrusts and hull;
+// a rock is knocked the same way, and either way the owner gets the equal and opposite push through the tether; walls, rings, the planet and moons throw the hammer's owner back; a missile or mine it touches goes off.
+// The ball is a sensor driven round the ship each physics step; the knock is worked out in hit(). It is retracted when its owner is destroyed.
+(function () {
+var K = VOD.K, S = K.S, HAMMER = { R: 85, w: 2.5, rad: 17, kick: .6, again: .4, dmg: 30 }; // R: tether length px, w: rad/s, kick: share of the swing's relative velocity handed to the ship, again: s before the same ship can be hit again
+var find = function (h, i) { return (h.ws.hammers || []).filter(function (m) { return m.owner === i; })[0]; };
+var drop = function (h, m) { h.world.DestroyBody(m.body); h.ws.hammers.splice(h.ws.hammers.indexOf(m), 1); };
+
+VOD.weapon('hammer', {
+  label: 'Hammer', order: 40,
+  targeted: false,
+  host: {
+    fire: function (h, sh) { // toggles
+      h.ws.hammers = h.ws.hammers || []; var m = find(h, sh.i);
+      if (m) { drop(h, m); h.events.push({ e: 'retract', i: sh.i }); return true; }
+      var p = sh.body.GetPosition(); m = { kind: 'hammer', projectile: true, owner: sh.i, a: sh.body.GetAngle(),
+        hit: function (hh, o) {
+          var k = o && o.kind, ow = hh.ships[this.owner];
+          if (!o || k === 'buoy' || k === 'hammer' || o === ow) return;
+          if (k === 'missile' || k === 'mine') { o.exploding = true; return; } // a swatted weapon goes off
+          var key = 'ham' + this.owner; if (hh.time < (o[key] || 0)) return; o[key] = hh.time + HAMMER.again;
+          var vb = this.body.GetLinearVelocity(), bp = this.body.GetPosition(), x = Math.round(bp.x * S), y = Math.round(bp.y * S), V = hh.V;
+          if (k === 'ship') { // not a wreck or a fresh respawn
+            if (o.dead || hh.time < o.inv) return;
+            var vs = o.body.GetLinearVelocity(), mm = o.body.GetMass() * HAMMER.kick, rx = (vb.x - vs.x) * mm, ry = (vb.y - vs.y) * mm; // (GetLinearVelocity returns the live vector, so the swing is worked out before anything is applied)
+            o.body.ApplyImpulse(new V(rx, ry), o.body.GetWorldCenter()); o.q = [[0, 0], [0, 0]]; o.zc++;
+            ow.body.ApplyImpulse(new V(-rx, -ry), ow.body.GetWorldCenter()); // equal and opposite: the tether pulls the owner back
+            hh.damage(o, HAMMER.dmg * Math.min(1.5, Math.hypot(rx, ry) / mm / (HAMMER.w * HAMMER.R / S))); // the harder the swing meets it, the more it hurts
+            hh.events.push({ e: 'bonk', i: o.i, x: x, y: y });
+          } else if (o.body.GetType() === hh.b2.Dynamics.b2Body.b2_dynamicBody) { // a rock: a heavy one hardly moves, and the owner's recoil is capped at what a ship hit would give
+            var vr = o.body.GetLinearVelocity(), mr = Math.min(o.body.GetMass() * HAMMER.kick, ow.body.GetMass() * HAMMER.kick), rx = (vb.x - vr.x) * mr, ry = (vb.y - vr.y) * mr;
+            o.body.ApplyImpulse(new V(rx, ry), o.body.GetWorldCenter()); hh.events.push({ e: 'bonk', x: x, y: y });
+            ow.body.ApplyImpulse(new V(-rx, -ry), ow.body.GetWorldCenter()); // equal and opposite
+          } else if (!ow.dead) { // something fixed: the swing comes to a halt and jerks the owner back
+            var vo = ow.body.GetLinearVelocity(), mo = ow.body.GetMass() * HAMMER.kick * .5;
+            ow.body.ApplyImpulse(new V((vo.x - vb.x) * mo, (vo.y - vb.y) * mo), ow.body.GetWorldCenter()); hh.events.push({ e: 'bonk', x: x, y: y });
+          }
+        } };
+      m.body = h.body(m, p.x * S, p.y * S, null, HAMMER.rad); // a sensor
+      h.ws.hammers.push(m); h.events.push({ e: 'deploy', i: sh.i }); return true;
+    },
+    before: function (h) { // every step: carry each ball round its ship
+      (h.ws.hammers || []).slice().forEach(function (m) {
+        var sh = h.ships[m.owner]; if (sh.dead) { drop(h, m); return; }
+        m.a += HAMMER.w * K.FIX; var p = sh.body.GetPosition(), v = sh.body.GetLinearVelocity(), c = Math.cos(m.a), s = Math.sin(m.a), R = HAMMER.R / S;
+        m.body.SetPosition(new h.V(p.x + c * R, p.y + s * R));
+        m.body.SetLinearVelocity(new h.V(v.x - s * R * HAMMER.w, v.y + c * R * HAMMER.w)); // the ship's velocity plus the swing
+      });
+    },
+    init: function () { return { R: HAMMER.R }; },
+    snapshot: function (h) { var r1 = function (v) { return Math.round(v * 10) / 10; }; return { hammers: (h.ws.hammers || []).map(function (m) { var p = m.body.GetPosition(); return [r1(p.x * S), r1(p.y * S), m.owner]; }) }; }
+  },
+  client: {
+    sound: function (e, v, T) {
+      if (e.e === 'deploy') { T.tone(120, 520, .4, 'sawtooth', .25 * v, 0, .08); T.noise(.4, 'bandpass', 500, 1500, .6 * v, 0, .1); }
+      else if (e.e === 'retract') { T.tone(520, 120, .3, 'sawtooth', .25 * v, 0, .05); T.noise(.3, 'bandpass', 1500, 500, .5 * v, 0, .06); }
+      else if (e.e === 'bonk') CORE_SOUNDS.hit({ d: 20 }, v); // the same sound as any other hit
+    },
+    verb: function (s, me) { return (s.w.hammers || []).some(function (m) { return m[2] === me; }) ? 'Retract' : 'Deploy'; }, // button: "Deploy Hammer" / "Retract Hammer"
+    interp: function (a, b, L) { return { hammers: (a.hammers || []).map(function (m) { const n = (b.hammers || []).find(o => o[2] === m[2]); return n ? [L(m[0], n[0]), L(m[1], n[1]), m[2]] : m; }) }; },
+    draw: function (G, I, now) {
+      I.w.hammers.forEach(m => {
+        const sh = I.ships[m[2]], col = G.players[m[2]].color; if (!sh || sh.hid) return;
+        ctx.save(); ctx.strokeStyle = col; ctx.globalAlpha = .7; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sh.x, sh.y); ctx.lineTo(m[0], m[1]); ctx.stroke(); ctx.globalAlpha = 1; // the tether
+        ctx.shadowColor = col; ctx.shadowBlur = 16; ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; circle(m[0], m[1], 17); ctx.fill(); ctx.stroke();
+        ctx.shadowBlur = 0; ctx.fillStyle = col; circle(m[0], m[1], 6); ctx.fill(); ctx.restore();
+      });
+    },
+    fx: function (f, now) { // a knock: a ring where the ship was struck
+      if (f.e !== 'bonk') return;
+      const t = (now - f.at) / 500; if (t >= 1) return;
+      ctx.save(); ctx.globalAlpha = 1 - t; ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(3, 3 / sc); circle(f.x, f.y, 25 + 55 * t); ctx.stroke(); ctx.restore();
+    }
+  }
+});
+})();
+
+// Weapon "Harpoon": used like the gun (arm, tap the target), but shorter range, harder hitting, and it reels the two ships in: both are yanked towards each other.
+(function () {
+var K = VOD.K, S = K.S, RANGE = 260, DMG = 40, YANK = 100, CD = K.WEAPON_CD; // YANK: velocity change in px/s given to each ship, towards the other
+var noProjectiles = function (u) { return u && u.projectile; };
+
+VOD.weapon('harpoon', {
+  label: 'Harpoon', order: 50,
+  targeted: true, range: RANGE,
+  host: {
+    fire: function (h, sh, t) {
+      var V = h.V, p = sh.body.GetPosition(), q = t.body.GetPosition(), x = p.x * S, y = p.y * S, dx = q.x * S - x, dy = q.y * S - y, len = Math.hypot(dx, dy) || 1;
+      if (len > RANGE) return h.nofire(sh, 'out of range');
+      var r = h.sight(sh.body, t.body, noProjectiles);
+      if (!r.clear) return h.nofire(sh, 'no line of sight');
+      var ux = dx / len, uy = dy / len, kt = t.body.GetMass() * YANK / S, ks = sh.body.GetMass() * YANK / S;
+      t.body.ApplyImpulse(new V(-ux * kt, -uy * kt), t.body.GetWorldCenter()); sh.body.ApplyImpulse(new V(ux * ks, uy * ks), sh.body.GetWorldCenter()); // towards each other
+      h.damage(t, DMG);
+      h.events.push({ e: 'harpoon', i: sh.i, t: t.i });
+      sh.readyAt = h.time + CD; return true;
+    }
+  },
+  client: {
+    sound: function (e, v, T) { if (e.e === 'harpoon') { T.tone(700, 200, .4, 'sawtooth', .4 * v); T.tone(1400, 400, .3, 'triangle', .15 * v) } }, // a twang
+    fx: function (f, now) { // a rope between the two ships that goes slack as they close in
+      if (f.e !== 'harpoon') return;
+      const a = 1 - (now - f.at) / 600; if (a <= 0 || !snaps.length) return;
+      const I = interp(now - 100), s1 = I.ships[f.i], s2 = I.ships[f.t]; if (!s1 || !s2 || s1.hid || s2.hid) return;
+      ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, 2 / sc); ctx.setLineDash([10 / sc, 6 / sc]); ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = '#fff'; circle(s2.x, s2.y, 7 + 8 * (1 - a)); ctx.fill(); ctx.restore();
+    }
+  }
+});
+})();
+
+// Weapon "Mine": the Fire button drops a mine behind the ship, where it stays (gravity still pulls it). After a short arming time it explodes when any ship, the
+// owner's too, comes within its trigger distance; the pilot can also detonate it at any time (the button becomes Detonate). One per pilot in play; the cooldown
+// starts when it is gone. The explosion is a heavy collision for every ship in reach (h.blast).
+(function () {
+var K = VOD.K, S = K.S, MINE = { arm: 1.5, trigger: 55, life: 90, radius: 9, drop: 75 }, BLAST = { r: 120, dmg: 60, push: 2 };
+var mine = function (h, i) { return h.projectiles.filter(function (m) { return m.kind === 'mine' && m.owner === i; }); };
+
+VOD.weapon('mine', {
+  label: 'Mine', order: 30,
+  targeted: false, // no target: Fire just drops it
+  host: {
+    fire: function (h, sh) {
+      if (mine(h, sh.i).length) return h.nofire(sh, 'a mine is already in play');
+      var p = sh.body.GetPosition(), v = sh.body.GetLinearVelocity(), sp = Math.hypot(v.x, v.y) * S, ang = sp > 5 ? Math.atan2(v.y, v.x) : sh.body.GetAngle();
+      var m = { kind: 'mine', projectile: true, owner: sh.i, born: h.time, exploding: false }; // a sensor: ships fly through it, it only watches them
+      m.body = h.body(m, p.x * S - Math.cos(ang) * MINE.drop, p.y * S - Math.sin(ang) * MINE.drop, null, MINE.radius); m.body.SetLinearVelocity(new h.V(0, 0));
+      h.projectiles.push(m); h.events.push({ e: 'drop', i: sh.i }); return true;
+    },
+    detonate: function (h, i) { var ms = mine(h, i); ms.forEach(function (m) { m.exploding = true; }); return ms.length > 0; },
+    before: function (h) { // every step: look for ships in reach of an armed mine, and for old mines
+      h.projectiles.forEach(function (m) {
+        if (m.kind !== 'mine') return;
+        if (h.time - m.born > MINE.life) m.exploding = true;
+        if (m.exploding || h.time - m.born < MINE.arm) return;
+        var p = m.body.GetPosition();
+        h.ships.forEach(function (s) { if (!s.dead && Math.hypot(s.body.GetPosition().x - p.x, s.body.GetPosition().y - p.y) * S < MINE.trigger) m.exploding = true; });
+      });
+    },
+    after: function (h) {
+      for (var i = h.projectiles.length - 1; i >= 0; i--) {
+        var m = h.projectiles[i]; if (m.kind !== 'mine' || !m.exploding) continue;
+        var p = m.body.GetPosition(); h.blast(p.x * S, p.y * S, BLAST); h.world.DestroyBody(m.body); h.projectiles.splice(i, 1);
+        var ow = h.ships[m.owner]; if (ow) ow.readyAt = h.time + K.WEAPON_CD;
+      }
+    },
+    init: function () { return { arm: MINE.arm, trigger: MINE.trigger }; },
+    snapshot: function (h) { // [x, y, owner, armed 0/1]
+      var r1 = function (v) { return Math.round(v * 10) / 10; };
+      return { mines: h.projectiles.filter(function (m) { return m.kind === 'mine'; }).map(function (m) { var p = m.body.GetPosition(); return [r1(p.x * S), r1(p.y * S), m.owner, h.time - m.born >= MINE.arm ? 1 : 0]; }) };
+    }
+  },
+  client: {
+    sound: function (e, v, T) { if (e.e === 'drop') { T.tone(500, 380, .12, 'triangle', .3 * v); T.tone(1000, 1000, .12, 'sine', .3 * v, .12); } },
+    verb: 'Drop', // the button reads "Drop Mine"
+    canDetonate: function (s, me) { return (s.w.mines || []).some(function (m) { return m[2] === me; }); },
+    interp: function (a, b, L) { return { mines: (a.mines || []).map(function (m) { const n = (b.mines || []).find(o => o[2] === m[2]); return n ? [L(m[0], n[0]), L(m[1], n[1]), m[2], n[3]] : m; }) }; },
+    draw: function (G, I, now) {
+      I.w.mines.forEach(m => {
+        const col = G.players[m[2]].color, pulse = m[3] ? .5 + .5 * Math.sin(now / 120) : .25 + .25 * Math.sin(now / 400);
+        ctx.save(); ctx.translate(m[0], m[1]); ctx.shadowColor = col; ctx.shadowBlur = 14; ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+        for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; ctx.beginPath(); ctx.moveTo(Math.cos(a) * 8, Math.sin(a) * 8); ctx.lineTo(Math.cos(a) * 15, Math.sin(a) * 15); ctx.stroke(); }
+        circle(0, 0, 9); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0; ctx.fillStyle = col; ctx.globalAlpha = pulse; circle(0, 0, 4); ctx.fill(); ctx.restore();
+        if (m[3] && G.w && G.w.trigger) { ctx.save(); ctx.globalAlpha = .18; ctx.strokeStyle = col; ctx.setLineDash([6 / sc, 8 / sc]); ctx.lineWidth = Math.max(1.5, 1.5 / sc); circle(m[0], m[1], G.w.trigger); ctx.stroke(); ctx.restore(); } // its trigger distance
+      });
+    },
+    fx: function (f, now) { // the explosion: a flash and a ring that grows to the blast radius
+      if (f.e !== 'blast') return;
+      const t = (now - f.at) / 700; if (t >= 1) return;
+      ctx.save(); ctx.globalAlpha = 1 - t; ctx.fillStyle = '#fff'; if (t < .2) { circle(f.x, f.y, f.r * .5 * (1 - t / .2) + 12); ctx.fill(); }
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(3, 3 / sc); circle(f.x, f.y, f.r * Math.min(1, t * 2.5)); ctx.stroke(); ctx.restore();
+    }
+  }
+});
+})();
+
+// Weapon "Missile": launched along the ship's own course with a little extra speed; with a clear line to the target, it accelerates flat out
+// towards it (twice a ship's maximum thrust). One per pilot in play; the pilot can detonate it at any time (Fire button becomes Detonate). It explodes on touching
+// anything but a buoy, or when its fuel runs out. The cooldown starts when the missile is gone.
+(function () {
+var K = VOD.K, S = K.S, STEP = K.STEP, MISSILE = { dv: 2 * K.POWER / STEP, every: .5, boost: 60, safe: 1.5, speed: 100, life: 20, radius: 5 }, BLAST = { r: 110, dmg: 60, push: 2 }; // blast: 60% of full hull at the centre, half of that at the edge
+// MISSILE.boost: extra launch speed (px/s) along the ship's course; safe: seconds during which it ignores its own ship. MISSILE.dv: flat-out acceleration over one STEP (px/s), spent in small guidance pulses every `every` s; speed: the closing speed it aims for
+var isProjectile = function (u) { return u && u.projectile; };
+var mine = function (h, i) { return h.projectiles.filter(function (m) { return m.kind === 'missile' && m.owner === i; }); };
+
+function steer(h, m) { // a guidance pulse: with a clear view of the target, thrust flat out in the direction that cancels the sideways drift and closes in
+  var t = h.ships[m.target]; if (!t || t.dead || h.hidden(t) || !h.sight(m.body, t.body, isProjectile).clear) return; // otherwise coast
+  var V = h.V, p = m.body.GetPosition(), q = t.body.GetPosition(), v = m.body.GetLinearVelocity(), tv = t.body.GetLinearVelocity(), dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy) || 1;
+  var nx = dx / len * MISSILE.speed / S - (v.x - tv.x), ny = dy / len * MISSILE.speed / S - (v.y - tv.y), nl = Math.hypot(nx, ny) || 1, k = MISSILE.dv * MISSILE.every / STEP / S * m.body.GetMass(); // wanted change of velocity gives the direction; the pulse is limited to the engine's budget
+  m.body.ApplyImpulse(new V(nx / nl * k, ny / nl * k), m.body.GetWorldCenter());
+}
+
+VOD.weapon('missile', {
+  label: 'Missile', order: 20,
+  targeted: true,
+  host: {
+    fire: function (h, sh, t) {
+      if (mine(h, sh.i).length) return h.nofire(sh, 'a missile is already in flight');
+      var p = sh.body.GetPosition(), v = sh.body.GetLinearVelocity(), sp = Math.hypot(v.x, v.y) * S, ang = sp > 5 ? Math.atan2(v.y, v.x) : sh.body.GetAngle(), ux = Math.cos(ang), uy = Math.sin(ang); // leaves along the ship's own course (its nose when it is standing still)
+      var m = { kind: 'missile', projectile: true, owner: sh.i, target: t.i, born: h.time, nextPulse: h.time + MISSILE.every, exploding: false,
+        hit: function (hh, o) { if (o.kind === 'buoy' || (o.kind === 'ship' && o.i === this.owner && hh.time - this.born < MISSILE.safe)) return; this.exploding = true; } }; // it cannot touch its own ship while pulling away
+      m.body = h.body(m, p.x * S + ux * 40, p.y * S + uy * 40, null, MISSILE.radius, 'dynamic'); // starts just ahead of the hull
+      m.body.SetBullet(true); m.body.SetFixedRotation(true); m.body.SetLinearVelocity(new h.V(v.x + ux * MISSILE.boost / S, v.y + uy * MISSILE.boost / S)); // the ship's velocity plus a boost along it
+      h.projectiles.push(m); steer(h, m); h.events.push({ e: 'launch', i: sh.i }); return true;
+    },
+    detonate: function (h, i) { var ms = mine(h, i); ms.forEach(function (m) { m.exploding = true; }); return ms.length > 0; },
+    before: function (h) { h.projectiles.forEach(function (m) { if (m.kind !== 'missile') return; if (h.time >= m.nextPulse) { steer(h, m); m.nextPulse += MISSILE.every; } if (h.time - m.born > MISSILE.life) m.exploding = true; }); },
+    after: function (h) { // explode the flagged missiles (not inside the contact callback), then start their owners' cooldown
+      for (var i = h.projectiles.length - 1; i >= 0; i--) {
+        var m = h.projectiles[i]; if (m.kind !== 'missile' || !m.exploding) continue;
+        var p = m.body.GetPosition(); h.blast(p.x * S, p.y * S, BLAST); h.world.DestroyBody(m.body); h.projectiles.splice(i, 1);
+        var ow = h.ships[m.owner]; if (ow) ow.readyAt = h.time + K.WEAPON_CD;
+      }
+    },
+    snapshot: function (h) { // [x, y, owner, vx, vy]
+      var r1 = function (v) { return Math.round(v * 10) / 10; };
+      return { missiles: h.projectiles.filter(function (m) { return m.kind === 'missile'; }).map(function (m) { var p = m.body.GetPosition(), v = m.body.GetLinearVelocity(); return [r1(p.x * S), r1(p.y * S), m.owner, r1(v.x * S), r1(v.y * S)]; }) };
+    }
+  },
+  client: {
+    sound: function (e, v, T) { if (e.e === 'launch') { T.noise(.7, 'bandpass', 400, 1600, 1.2 * v, 0, .12); T.tone(200, 700, .65, 'sawtooth', .12 * v, 0, .1); } }, // a thunk, then a rising whoosh
+    canDetonate: function (s, me) { return (s.w.missiles || []).some(function (m) { return m[2] === me; }); }, // then the Fire button detonates
+    interp: function (a, b, L) { return { missiles: (a.missiles || []).map(function (m) { const n = (b.missiles || []).find(o => o[2] === m[2]); return n ? [L(m[0], n[0]), L(m[1], n[1]), m[2], L(m[3], n[3]), L(m[4], n[4])] : m; }) }; },
+    draw: function (G, I, now) {
+      I.w.missiles.forEach(m => {
+        const col = G.players[m[2]].color, ang = Math.atan2(m[4], m[3]), fl = 10 + 8 * Math.random();
+        ctx.save(); ctx.translate(m[0], m[1]); ctx.rotate(ang);
+        ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.beginPath(); ctx.moveTo(-5, -3); ctx.lineTo(-5 - fl, 0); ctx.lineTo(-5, 3); ctx.closePath(); ctx.fill();
+        ctx.shadowColor = col; ctx.shadowBlur = 14; ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(9, 0); ctx.lineTo(-6, -5); ctx.lineTo(-6, 5); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+      });
+    },
+    fx: function (f, now) { // the explosion: a flash and a ring that grows to the blast radius
+      if (f.e !== 'blast') return;
+      const t = (now - f.at) / 700; if (t >= 1) return;
+      ctx.save(); ctx.globalAlpha = 1 - t; ctx.fillStyle = '#fff'; if (t < .2) { circle(f.x, f.y, f.r * .5 * (1 - t / .2) + 12); ctx.fill(); }
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(3, 3 / sc); circle(f.x, f.y, f.r * Math.min(1, t * 2.5)); ctx.stroke(); ctx.restore();
+    }
+  }
+});
+})();
+
+// Playfield "Caves": a start cavern on the left, then a seeded maze with several entrances and loops (route choices), drawn as organic rock walls.
+// Tuning (development): add ?corridor=240&loops=30&rough=80&tilt=80&seed=7 to the page address.
+(function () {
+var K = VOD.K, S = K.S, NB = K.NB, W = K.W, H = K.H, WALL_MASS = 2; // a wall hit hurts like hitting something this heavy (a rock is about 3)
+
+// Cave walls: the maze's straight wall boxes are only a skeleton. Rasterise them, blur (rounds corners and ends), add smooth noise (the jitter), and trace the
+// 0.5 contour with marching squares. Returns closed loops as flat [x0, y0, x1, y1, ...] integer arrays. amp < 0.5 keeps walls solid and corridors open.
+function simplify(p, tol) { // Douglas-Peucker on an open polyline
+  if (p.length < 3) return p;
+  var keep = new Uint8Array(p.length), st = [[0, p.length - 1]]; keep[0] = keep[p.length - 1] = 1;
+  while (st.length) {
+    var s = st.pop(), a = p[s[0]], b = p[s[1]], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1, md = -1, mi = -1;
+    for (var q = s[0] + 1; q < s[1]; q++) {
+      var tt = Math.max(0, Math.min(1, ((p[q][0] - a[0]) * dx + (p[q][1] - a[1]) * dy) / L2)), ex = a[0] + tt * dx - p[q][0], ey = a[1] + tt * dy - p[q][1], d = ex * ex + ey * ey;
+      if (d > md) { md = d; mi = q; }
+    }
+    if (md > tol * tol) { keep[mi] = 1; st.push([s[0], mi], [mi, s[1]]); }
+  }
+  return p.filter(function (_, q) { return keep[q]; });
+}
+function caveContours(rects, W, H, t, amp, rng, warp) {
+  var g = 6, pad = 6, nx = Math.ceil(W / g) + 1 + 2 * pad, ny = Math.ceil(H / g) + 1 + 2 * pad, i, j, solid0 = new Uint8Array(nx * ny), solid = new Uint8Array(nx * ny);
+  for (j = 0; j < ny; j++) for (i = 0; i < nx; i++) { var px = (i - pad) * g, py = (j - pad) * g; if (px < 0 || py < 0 || px > W || py > H) solid0[j * nx + i] = 1; } // outside the field is rock
+  rects.forEach(function (r) {
+    var i0 = Math.max(0, Math.ceil((r[0] - r[2] / 2) / g) + pad), i1 = Math.min(nx - 1, Math.floor((r[0] + r[2] / 2) / g) + pad), j0 = Math.max(0, Math.ceil((r[1] - r[3] / 2) / g) + pad), j1 = Math.min(ny - 1, Math.floor((r[1] + r[3] / 2) / g) + pad);
+    for (var b = j0; b <= j1; b++) for (var a = i0; a <= i1; a++) solid0[b * nx + a] = 1;
+  });
+  var mkNoise = function (sz) { // smooth value noise in [-1, 1] with features about sz px wide
+    var cw = Math.ceil(W / sz) + 3, ch = Math.ceil(H / sz) + 3, a = []; for (var q = 0; q < cw * ch; q++) a.push(rng() * 2 - 1);
+    return function (x, y) {
+      var fx = x / sz + 1, fy = y / sz + 1, ix = Math.floor(fx), iy = Math.floor(fy), ux = fx - ix, uy = fy - iy; ux = ux * ux * (3 - 2 * ux); uy = uy * uy * (3 - 2 * uy);
+      return a[iy * cw + ix] * (1 - ux) * (1 - uy) + a[iy * cw + ix + 1] * ux * (1 - uy) + a[(iy + 1) * cw + ix] * (1 - ux) * uy + a[(iy + 1) * cw + ix + 1] * ux * uy;
+    };
+  };
+  var wx = warp ? mkNoise(360) : null, wy = warp ? mkNoise(360) : null; // a smooth displacement field: it leans and bends the straight walls without breaking a single connection
+  for (j = 0; j < ny; j++) for (i = 0; i < nx; i++) {
+    var qx = (i - pad) * g, qy = (j - pad) * g, si = Math.round((warp ? qx + warp * wx(qx, qy) : qx) / g) + pad, sj = Math.round((warp ? qy + warp * wy(qx, qy) : qy) / g) + pad;
+    solid[j * nx + i] = si < 0 || sj < 0 || si >= nx || sj >= ny ? 1 : solid0[sj * nx + si];
+  }
+  var rw = Math.max(1, Math.floor(t / 2 / g)), S2 = nx + 1, I = new Int32Array(S2 * (ny + 1)), F = new Float32Array(nx * ny);
+  for (j = 0; j < ny; j++) { var row = 0; for (i = 0; i < nx; i++) { row += solid[j * nx + i]; I[(j + 1) * S2 + i + 1] = I[j * S2 + i + 1] + row; } }
+  var n1 = mkNoise(150), n2 = mkNoise(60), noise = function (x, y) { return .65 * n1(x, y) + .35 * n2(x, y); }; // the wobble along the walls
+  for (j = 0; j < ny; j++) for (i = 0; i < nx; i++) {
+    var a0 = Math.max(0, i - rw), a1 = Math.min(nx - 1, i + rw), b0 = Math.max(0, j - rw), b1 = Math.min(ny - 1, j + rw);
+    var sum = I[(b1 + 1) * S2 + a1 + 1] - I[b0 * S2 + a1 + 1] - I[(b1 + 1) * S2 + a0] + I[b0 * S2 + a0];
+    F[j * nx + i] = sum / ((a1 - a0 + 1) * (b1 - b0 + 1)) + (amp ? amp * noise((i - pad) * g, (j - pad) * g) : 0);
+  }
+  var segs = [], at = {};
+  var ep = function (e) { // crossing point on a cell edge: 'h' joins node (i,j)-(i+1,j), 'v' joins (i,j)-(i,j+1)
+    var i2 = e[0] === 'h' ? e[1] + 1 : e[1], j2 = e[0] === 'h' ? e[2] : e[2] + 1, f1 = F[e[2] * nx + e[1]], f2 = F[j2 * nx + i2], tt = (.5 - f1) / (f2 - f1);
+    return [(e[1] - pad + tt * (i2 - e[1])) * g, (e[2] - pad + tt * (j2 - e[2])) * g];
+  };
+  var key = function (e) { return e[0] + e[1] + ',' + e[2]; };
+  var S = function (e1, e2) { var id = segs.length; segs.push([key(e1), key(e2), ep(e1), ep(e2)]); (at[key(e1)] = at[key(e1)] || []).push(id); (at[key(e2)] = at[key(e2)] || []).push(id); };
+  for (j = 0; j < ny - 1; j++) for (i = 0; i < nx - 1; i++) {
+    var va = F[j * nx + i] > .5, vb = F[j * nx + i + 1] > .5, vc = F[(j + 1) * nx + i + 1] > .5, vd = F[(j + 1) * nx + i] > .5, idx = (va ? 1 : 0) | (vb ? 2 : 0) | (vc ? 4 : 0) | (vd ? 8 : 0);
+    if (idx === 0 || idx === 15) continue;
+    var T = ['h', i, j], B = ['h', i, j + 1], L = ['v', i, j], R = ['v', i + 1, j];
+    switch (idx) {
+      case 1: case 14: S(L, T); break; case 2: case 13: S(T, R); break; case 3: case 12: S(L, R); break;
+      case 4: case 11: S(R, B); break; case 6: case 9: S(T, B); break; case 7: case 8: S(L, B); break;
+      case 5: case 10: var ctr = (F[j * nx + i] + F[j * nx + i + 1] + F[(j + 1) * nx + i + 1] + F[(j + 1) * nx + i]) / 4 > .5;
+        if ((idx === 5) === ctr) { S(T, R); S(L, B); } else { S(L, T); S(R, B); }
+    }
+  }
+  var used = new Uint8Array(segs.length), loops = [];
+  for (var s0 = 0; s0 < segs.length; s0++) {
+    if (used[s0]) continue;
+    var pts = [], cur = s0, k = segs[s0][0];
+    while (cur !== null && !used[cur]) {
+      used[cur] = 1; var sg = segs[cur], from = sg[0] === k ? 0 : 1; pts.push(from === 0 ? sg[2] : sg[3]); k = from === 0 ? sg[1] : sg[0];
+      var nx2 = (at[k] || []).filter(function (id) { return !used[id]; }); cur = nx2.length ? nx2[0] : null;
+    }
+    pts.push(pts[0]); var sp = simplify(pts, 1.2); sp.pop();
+    var per = 0; for (var q = 0; q < sp.length; q++) { var nq = sp[(q + 1) % sp.length]; per += Math.hypot(nq[0] - sp[q][0], nq[1] - sp[q][1]); }
+    if (sp.length >= 3 && per > 80) loops.push([].concat.apply([], sp.map(function (p) { return [Math.round(p[0]), Math.round(p[1])]; })));
+  }
+  return loops;
+}
+
+// "Caves" playfield: a start cavern on the left, then a maze with several entrances. Corridor width = opts.corridor (px). A spanning tree guarantees every cell
+// is reachable; opts.loops (0..1) then knocks out that share of the remaining walls, so there are alternative routes rather than one hard solution.
+function build(host, names, opts) { // note: h and v below are the maze wall arrays
+  var self = host, V = host.V, b2 = host.b2, i, j, k;
+  var seed = opts.seed != null && opts.seed !== '' && isFinite(+opts.seed) ? +opts.seed : Math.floor(Math.random() * 1e9), rng = VOD.u.mulberry(seed);
+  var rint = function (n) { return Math.floor(rng() * n); }, shuffle = function (a) { for (var q = a.length - 1; q > 0; q--) { var r = rint(q + 1), t = a[q]; a[q] = a[r]; a[r] = t; } return a; };
+  var c = Math.max(120, Math.min(480, +opts.corridor || 240)), loops = Math.max(0, Math.min(1, opts.loops != null && isFinite(+opts.loops) ? +opts.loops : .2));
+  var t = Math.round(Math.max(40, Math.min(70, c * .25))), P = c + t, SW = 700; // t: wall thickness, P: grid pitch, SW: width of the start cavern
+  var N = Math.max(4, Math.floor(2700 / P)), M = Math.max(3, Math.floor(1500 / P)), x0 = SW, y0 = t / 2;
+  host.W = SW + N * P + t / 2; host.H = M * P + t; host.pfs.seed = seed;
+  var v = [], h = []; // v[i][j]: wall on vertical line i beside row j; h[i][j]: wall on horizontal line j under column i
+  for (i = 0; i <= N; i++) { v[i] = []; for (j = 0; j < M; j++) v[i][j] = true; }
+  for (i = 0; i < N; i++) { h[i] = []; for (j = 0; j <= M; j++) h[i][j] = true; }
+  var par = []; for (k = 0; k < N * M; k++) par[k] = k;
+  var find = function (a) { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; }, edges = [], left = [];
+  for (i = 1; i < N; i++) for (j = 0; j < M; j++) edges.push([0, i, j, i - 1 + j * N, i + j * N]);
+  for (i = 0; i < N; i++) for (j = 1; j < M; j++) edges.push([1, i, j, i + (j - 1) * N, i + j * N]);
+  shuffle(edges).forEach(function (e) {
+    var a = find(e[3]), b = find(e[4]);
+    if (a !== b) { par[a] = b; (e[0] ? h : v)[e[1]][e[2]] = false; } else left.push(e);
+  });
+  left.forEach(function (e) { if (rng() < loops) (e[0] ? h : v)[e[1]][e[2]] = false; }); // the extra openings: route choices
+  var rows = []; for (j = 0; j < M; j++) rows.push(j);
+  var entrances = shuffle(rows).slice(0, Math.min(M, Math.max(3, Math.round(M * .6), names.length))); entrances.forEach(function (r) { v[0][r] = false; });
+  var open = function (u) { var ui = u % N, uj = Math.floor(u / N), o = []; // cells you can walk to from cell u
+    if (ui > 0 && !v[ui][uj]) o.push(u - 1); if (ui < N - 1 && !v[ui + 1][uj]) o.push(u + 1); if (uj > 0 && !h[ui][uj]) o.push(u - N); if (uj < M - 1 && !h[ui][uj + 1]) o.push(u + N); return o; };
+  var bfs = function (src) { var d = [], q = src.slice(); for (var z = 0; z < N * M; z++) d[z] = -1; src.forEach(function (s0) { d[s0] = 0; });
+    while (q.length) { var u = q.shift(); open(u).forEach(function (w) { if (d[w] < 0) { d[w] = d[u] + 1; q.push(w); } }); } return d; };
+  var dEnt = bfs(entrances.map(function (r) { return r * N; })), chosen = []; // buoy 1 a few cells in from the entrances, the next ones a good walk from the previous buoy and not near earlier ones
+  for (var bn = 0; bn < NB; bn++) {
+    var dPrev = bn ? bfs([chosen[bn - 1]]) : dEnt, lo = bn ? 4 : 3, hi = bn ? 9 : 6, cand = [];
+    for (var att = 0; att < 7 && !cand.length; att++) for (var u = 0; u < N * M; u++) {
+      if (chosen.indexOf(u) >= 0 || dPrev[u] < lo - att || dPrev[u] > hi + att * 2) continue;
+      if (chosen.every(function (o) { return Math.hypot(o % N - u % N, Math.floor(o / N) - Math.floor(u / N)) >= 3 - Math.floor(att / 3); })) cand.push(u);
+    }
+    if (!cand.length) for (var u2 = 0; u2 < N * M; u2++) if (chosen.indexOf(u2) < 0) cand.push(u2);
+    chosen.push(cand[rint(cand.length)]);
+  }
+  chosen.forEach(function (u, n) {
+    var bx = x0 + (u % N + .5) * P, by = y0 + (Math.floor(u / N) + .5) * P;
+    host.addBuoy(n + 1, bx, by);
+  });
+  var rects = []; // [centre x, centre y, width, height] in px
+  for (i = 0; i <= N; i++) for (j = 0; j < M; j++) if (v[i][j]) rects.push([x0 + i * P, y0 + j * P + P / 2, t, P + t]);
+  for (i = 0; i < N; i++) for (j = 0; j <= M; j++) if (h[i][j]) rects.push([x0 + i * P + P / 2, y0 + j * P, P + t, t]);
+  rects.push([x0 / 2, y0, x0, t], [x0 / 2, y0 + M * P, x0, t], [t / 2, host.H / 2, t, host.H]); // roof, floor and back wall of the start cavern
+  var rough = Math.max(0, Math.min(100, opts.rough != null && isFinite(+opts.rough) ? +opts.rough : 80)) / 100;
+  var tilt = Math.max(0, Math.min(100, opts.tilt != null && isFinite(+opts.tilt) ? +opts.tilt : 80)) / 100; // how far walls may lean from vertical and horizontal
+  var cave = caveContours(rects, host.W, host.H, t, .38 * rough, rng, Math.min(60, c * .25) * tilt); // organic outlines; rough = 0 gives smooth rounded walls, 100 the most jitter
+  var wall = { kind: 'wall', mass: WALL_MASS }, bd = new b2.Dynamics.b2BodyDef(); bd.type = b2.Dynamics.b2Body.b2_staticBody; bd.userData = wall;
+  wall.body = host.world.CreateBody(bd);
+  cave.forEach(function (lp) { // every outline segment is an edge shape
+    for (var q = 0; q < lp.length; q += 2) {
+      var nq = (q + 2) % lp.length, x1 = lp[q], y1 = lp[q + 1], x2 = lp[nq], y2 = lp[nq + 1]; if (Math.hypot(x2 - x1, y2 - y1) < .5) continue;
+      var fd = new b2.Dynamics.b2FixtureDef(); fd.shape = new b2.Collision.Shapes.b2PolygonShape(); fd.shape.SetAsEdge(new V(x1 / S, y1 / S), new V(x2 / S, y2 / S));
+      fd.friction = .2; fd.restitution = .5; wall.body.CreateFixture(fd);
+    }
+  });
+  host.pfs.walls = cave;
+  // ships line up in front of the entrances and head straight through them, so nobody starts aimed at a wall
+  var segs = []; cave.forEach(function (lp) { for (var q = 0; q < lp.length; q += 2) { var nq = (q + 2) % lp.length; segs.push([lp[q], lp[q + 1], lp[nq], lp[nq + 1]]); } });
+  var wallDist = function (x, y) { var best = 1e9; segs.forEach(function (sg) { var dx = sg[2] - sg[0], dy = sg[3] - sg[1], tt = Math.max(0, Math.min(1, ((x - sg[0]) * dx + (y - sg[1]) * dy) / (dx * dx + dy * dy || 1))); best = Math.min(best, Math.hypot(sg[0] + tt * dx - x, sg[1] + tt * dy - y)); }); return best; };
+  var clearAlong = function (yy) { var m = 1e9; for (var xx = 260; xx <= x0 + 120; xx += 40) m = Math.min(m, wallDist(xx, yy)); return m; }; // clearance along the whole straight run into the entrance
+  var bestY = function (r) { // the widest-open height of entrance row r, so the walls' jitter and tilt cannot put a wall edge in the way
+    var cy = y0 + (r + .5) * P, best = cy, bc = -1;
+    for (var yy = cy - P / 2 + 20; yy <= cy + P / 2 - 20; yy += 6) { var cl = clearAlong(yy); if (cl > bc + 1 || (Math.abs(cl - bc) <= 1 && Math.abs(yy - cy) < Math.abs(best - cy))) { bc = cl; best = yy; } }
+    return best;
+  };
+  var ent = shuffle(entrances.slice()), placed = [];
+  var slot = function (r) { // a free spot in front of entrance r: clear of walls and at least 62 px from the ships placed before it
+    var base = bestY(r), offs = [0, 70, -70, 140, -140, 210, -210], pick = null;
+    for (var pass = 0; pass < 2 && pick === null; pass++) for (var q = 0; q < offs.length && pick === null; q++) {
+      var yy = base + offs[q];
+      if (pass === 0 && clearAlong(yy) < 34) continue;
+      if (placed.every(function (p) { return Math.abs(p - yy) >= 62; })) pick = yy;
+    }
+    placed.push(pick === null ? base : pick); return placed[placed.length - 1];
+  };
+  names.forEach(function (name, q) {
+    var sh = self.addShip(q, name, [260, slot(ent[q % ent.length])], [100, 0]);
+    sh.body.GetFixtureList().SetRestitution(.5); // bounce less off walls
+  });
+}
+
+let wallIdx = null;
+function nearWall(G, x, y, R) { // is (x, y) within R px (R <= 24) of a cave wall? uses a grid of outline segments, built on first use
+  if (!wallIdx || wallIdx.src !== G.pf.walls) {
+    const C = 48, grid = {}, segs = [];
+    G.pf.walls.forEach(lp => { for (let q = 0; q < lp.length; q += 2) { const n = (q + 2) % lp.length, sg = [lp[q], lp[q + 1], lp[n], lp[n + 1]], id = segs.push(sg) - 1;
+      for (let cx = Math.floor((Math.min(sg[0], sg[2]) - 24) / C); cx <= Math.floor((Math.max(sg[0], sg[2]) + 24) / C); cx++) for (let cy = Math.floor((Math.min(sg[1], sg[3]) - 24) / C); cy <= Math.floor((Math.max(sg[1], sg[3]) + 24) / C); cy++) (grid[cx + ',' + cy] = grid[cx + ',' + cy] || []).push(id); } });
+    wallIdx = { src: G.pf.walls, C, grid, segs };
+  }
+  const l = wallIdx.grid[Math.floor(x / wallIdx.C) + ',' + Math.floor(y / wallIdx.C)]; if (!l) return false;
+  return l.some(id => { const sg = wallIdx.segs[id], dx = sg[2] - sg[0], dy = sg[3] - sg[1], t = Math.max(0, Math.min(1, ((x - sg[0]) * dx + (y - sg[1]) * dy) / (dx * dx + dy * dy || 1))), ex = sg[0] + t * dx - x, ey = sg[1] + t * dy - y; return ex * ex + ey * ey < R * R; });
+}
+
+VOD.playfield('caves', {
+  label: 'Caves', order: 30,
+  host: {
+    build: build,
+    init: function (h) { return { walls: h.pfs.walls, seed: h.pfs.seed }; }
+  },
+  client: {
+    blocked: nearWall, // is (x, y) within R px of a wall? the route preview shows a red circle where the plan hits one
+    hud: function (G) { return '<br><small>maze seed ' + G.pf.seed + '</small>'; },
+    opts: function (q, fresh) { // development parameters from the page address
+      const num = k => q.get(k) === null || q.get(k) === '' ? undefined : +q.get(k);
+      return { corridor: num('corridor'), loops: num('loops') === undefined ? undefined : Math.max(0, Math.min(100, num('loops'))) / 100, rough: num('rough'), tilt: num('tilt'), seed: fresh ? null : q.get('seed') };
+    },
+    draw: function (G, I) {
+  if (G.pf.walls) { // cave walls: everything outside the free-space outlines is rock (even-odd fill), with a glowing edge
+    const trace = () => { ctx.beginPath(); G.pf.walls.forEach(lp => { for (let q = 0; q < lp.length; q += 2) q ? ctx.lineTo(lp[q], lp[q + 1]) : ctx.moveTo(lp[q], lp[q + 1]); ctx.closePath(); }); };
+    ctx.save(); ctx.lineJoin = 'round'; trace(); ctx.strokeStyle = '#cfe'; ctx.lineWidth = 8; ctx.shadowColor = '#8ab'; ctx.shadowBlur = 25; ctx.stroke(); ctx.shadowBlur = 0;
+    ctx.rect(-400, -400, G.W + 800, G.H + 800); ctx.fillStyle = '#05060c'; ctx.fill('evenodd');
+    trace(); ctx.strokeStyle = '#e8f4ff'; ctx.lineWidth = 2; ctx.stroke(); ctx.restore(); }
+    }
+  }
+});
+})();
+
+// Playfield "Rocks" (classic): 10 drifting rocks, buoy 1 in the middle, the other buoys on random free cells. VOD.playfield(id, def) - see src/README.md.
+(function () {
+var K = VOD.K, S = K.S, W = K.W, H = K.H, NB = K.NB, STEP = K.STEP, rnd = VOD.u.rnd, pick = VOD.u.pick, hull = VOD.u.hull, NR = 10;
+
+VOD.playfield('classic', {
+  label: 'Rocks', order: 10,
+  host: {
+    build: function (h, names) { // create obstacles and buoys, then place the ships (h.cornerStarts / freeCells / addBuoy / placeShips are in core/host.js)
+      var V = h.V, bu1 = [W / 2, H / 2], corner = pick([[0,0],[W,0],[0,H],[W,H]]), starts = h.cornerStarts(corner, bu1, names.length), cells = h.freeCells(starts), i;
+      h.pfs.rocks = [];
+      for (i = 0; i < NR; i++) { // rocks: 8 random vertices, so the convex hull stays within Box2D's 8 vertex limit
+        var p = pick(cells), size = rnd(50, 80), pts = [];
+        for (var a = 0; a < 8; a++) { var l = rnd(size * .375, size * .5), an = a * Math.PI / 4; pts.push([Math.cos(an) * l, Math.sin(an) * l]); }
+        var r = { kind: 'rock' }; r.pts = hull(pts);
+        r.body = h.body(r, p[0], p[1], r.pts, 0);
+        r.body.SetLinearVelocity(new V(rnd(0, 25) / S, rnd(0, 25) / S)); r.body.SetAngularVelocity(rnd(0, 90) * Math.PI / 180);
+        h.pfs.rocks.push(r); h.loose.push(r);
+      }
+      h.addBuoy(1, bu1[0], bu1[1]);
+      for (i = 2; i <= NB; i++) { var q = pick(cells); h.addBuoy(i, q[0], q[1]); }
+      h.placeShips(names, starts, bu1);
+    },
+    tick: function (h) { // keep rocks on the track
+      var V = h.V;
+      h.pfs.rocks.forEach(function (r) {
+        var p = r.body.GetPosition(), dx = W / 2 - p.x * S, dy = H / 2 - p.y * S, d = Math.hypot(dx, dy);
+        if (d > Math.min(W, H) / 2) { var m = r.body.GetMass(); r.body.ApplyImpulse(new V(dx / d * 5 / (S * STEP) * m, dy / d * 5 / (S * STEP) * m), r.body.GetWorldCenter()); }
+      });
+    },
+    init: function (h) { return { rocks: h.pfs.rocks.map(function (r) { return r.pts; }) }; },
+    snapshot: function (h) { return { rocks: h.pfs.rocks.map(function (r) { var p = r.body.GetPosition(), r1 = function (v) { return Math.round(v * 10) / 10; }; return [r1(p.x * S), r1(p.y * S), r.body.GetAngle()]; }) }; }
+  },
+  client: { // runs in every player's browser; uses the page globals ctx, sc, circle, smooth, poly (src/client/render.js)
+    interp: function (a, b, L, ang) { return { rocks: a.rocks.map(function (r, i) { return [L(r[0], b.rocks[i][0]), L(r[1], b.rocks[i][1]), ang(r[2], b.rocks[i][2])]; }) }; },
+    draw: function (G, I) { // background layer: below buoys and ships
+  G.pf.rocks.forEach((pts, i) => { const r = I.pf.rocks[i]; ctx.save(); ctx.translate(r[0], r[1]); ctx.rotate(r[2]); smooth(pts);
+    ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.shadowColor = 'darkgrey'; ctx.shadowBlur = 20; ctx.fill(); ctx.stroke(); ctx.restore(); });
+    }
+  }
+});
+})();
+
+// Playfield "Clouds": drifting, overlapping circular clouds cover about half of the field. A ship inside a cloud when a thrust fires (every 3 s) first loses 50% of its velocity, and the thrust itself is cut by 50% too.
+// A ship inside a cloud is also hidden from the other players, and cannot be targeted or homed in on by missiles; it can still collide with things. Overlaps do not stack. Cloud positions are a pure function of the host's clock (straight drift, bouncing off the edges of the field), so the client can predict them for the route preview.
+(function () {
+var K = VOD.K, W = K.W, H = K.H, NB = K.NB, rnd = VOD.u.rnd, pick = VOD.u.pick, KEEP = .5, SLOW = { v: KEEP, t: KEEP }, ONE = { v: 1, t: 1 }, COVER = .5, RMIN = 120, RMAX = 260;
+var bounce = function (v, L) { var m = (v % (2 * L) + 2 * L) % (2 * L); return m <= L ? m : 2 * L - m; }; // a straight run that reflects off 0 and L
+var at = function (c, t) { return [bounce(c.x + c.vx * t, W), bounce(c.y + c.vy * t, H)]; }; // where cloud c (its centre) is at host time t: it bounces off the edges of the field
+var inside = function (clouds, x, y, t) { return clouds.some(function (c) { var p = at(c, t); return Math.hypot(p[0] - x, p[1] - y) < c.r; }); };
+// Clouds are added until the average cover over the first
+// 10 minutes reaches 50%, and a layout is only accepted if the cover stays between 40% and 65% in that time (the best of 80 tries otherwise).
+var GRID = 60, GX = Math.floor(W / GRID), GY = Math.floor(H / GRID), TS = [], i0;
+for (i0 = 0; i0 <= 600; i0 += 30) TS.push(i0);
+var makeClouds = function () {
+  var best = null;
+  for (var attempt = 0; attempt < 80; attempt++) {
+    var clouds = [], seen = TS.map(function () { return new Uint8Array(GX * GY); }), count = TS.map(function () { return 0; }), mean = 0, mn = 0, mx = 0;
+    while (clouds.length < 60 && mean < COVER) {
+      var an = rnd(0, 2 * Math.PI), sp = rnd(12, 28), c = { x: rnd(0, W), y: rnd(0, H), vx: Math.cos(an) * sp, vy: Math.sin(an) * sp, r: rnd(RMIN, RMAX) }; clouds.push(c);
+      TS.forEach(function (t, k) { // mark the sample points this cloud covers at time t
+        var p = at(c, t);
+        for (var gx = Math.max(0, Math.floor((p[0] - c.r) / GRID)); gx <= Math.min(GX - 1, Math.floor((p[0] + c.r) / GRID)); gx++) for (var gy = Math.max(0, Math.floor((p[1] - c.r) / GRID)); gy <= Math.min(GY - 1, Math.floor((p[1] + c.r) / GRID)); gy++) {
+          var idx = gx * GY + gy; if (!seen[k][idx] && Math.hypot(p[0] - (gx + .5) * GRID, p[1] - (gy + .5) * GRID) < c.r) { seen[k][idx] = 1; count[k]++; }
+        }
+      });
+      var fr = count.map(function (n) { return n / (GX * GY); }); mean = fr.reduce(function (a, b) { return a + b; }, 0) / fr.length; mn = Math.min.apply(null, fr); mx = Math.max.apply(null, fr);
+    }
+    var bad = Math.max(0, .4 - mn) + Math.max(0, mx - .65); if (!best || bad < best.bad) best = { clouds: clouds, bad: bad };
+    if (bad === 0) break;
+  }
+  return best.clouds;
+};
+
+VOD.playfield('clouds', {
+  label: 'Clouds', order: 28,
+  host: {
+    build: function (h, names) {
+      var bu1 = [W / 2, H / 2], corner = pick([[0,0],[W,0],[0,H],[W,H]]), starts = h.cornerStarts(corner, bu1, names.length), cells = h.freeCells(starts), clouds = makeClouds(), i;
+      h.pfs.clouds = clouds;
+      h.addBuoy(1, bu1[0], bu1[1]); for (i = 2; i <= NB; i++) { var q = pick(cells); h.addBuoy(i, q[0], q[1]); }
+      h.placeShips(names, starts, bu1);
+    },
+    drag: function (h, sh) { var p = sh.body.GetPosition(); return inside(h.pfs.clouds, p.x * K.S, p.y * K.S, h.time) ? SLOW : ONE; }, // velocity and thrust factors applied just before each thrust fires
+    hidden: function (h, sh) { var p = sh.body.GetPosition(); return inside(h.pfs.clouds, p.x * K.S, p.y * K.S, h.time); }, // inside a cloud: hidden from the other players and from missiles (not from collisions)
+    init: function (h) { return { clouds: h.pfs.clouds }; }
+  },
+  client: {
+    damp: function (G, x, y, T) { return inside(G.pf.clouds, x, y, T) ? SLOW : ONE; }, // the same factor, for the route preview
+    draw: function (G, I) {
+      G.pf.clouds.forEach(c => {
+        const p = at(c, I.th), x = p[0], y = p[1], g = ctx.createRadialGradient(x, y, 0, x, y, c.r);
+        g.addColorStop(0, 'rgba(160,185,225,.26)'); g.addColorStop(.8, 'rgba(160,185,225,.26)'); g.addColorStop(1, 'rgba(160,185,225,0)');
+        ctx.fillStyle = g; circle(x, y, c.r); ctx.fill();
+      });
+    }
+  }
+});
+})();
+
+// Playfield "Planet": a planet in the middle with three moons on orbits; gravity (k / distance^2) bends every trajectory. Buoys lie on alternate sides of the planet.
+(function () {
+var K = VOD.K, S = K.S, W = K.W, H = K.H, NB = K.NB, FIX = K.FIX, pick = VOD.u.pick;
+var PLANET = { rad: 90, k: 600000, mass: 8, soft: 8 }; // gravity = k / distance^2: about 10 px/s^2 at 250 px, i.e. a step's drift moves ~45 px
+var MOON_K = PLANET.k / 9; // a moon pulls 1/9 as hard as the planet, so the two cancel 3/4 of the way from the planet to the moon (0.75^2 : 0.25^2 = 9 : 1)
+var MOONS = [{ r: 250, rad: 26, k: MOON_K, w: .15, mass: 4 }, { r: 380, rad: 20, k: MOON_K, w: -.1, mass: 3 }, { r: 520, rad: 32, k: MOON_K, w: .07, mass: 5 }];
+var orbit = function (h, m, t) { var a = m.a0 + m.w * t, c = h.pfs.grav.c; return [c[0] + m.r * Math.cos(a), c[1] + m.r * Math.sin(a)]; };
+
+VOD.playfield('planet', {
+  label: 'Planet', order: 20,
+  host: {
+    build: function (h, names) {
+      var ctr = [W / 2, H / 2], corner = pick([[0,0],[W,0],[0,H],[W,H]]), n = names.length, i;
+      var grav = h.pfs.grav = { c: ctr, soft: PLANET.soft, planet: { rad: PLANET.rad, k: PLANET.k }, moons: [] }; h.pfs.moons = [];
+      var planet = { kind: 'planet', mass: PLANET.mass }; planet.body = h.body(planet, ctr[0], ctr[1], null, PLANET.rad, 'static');
+      MOONS.forEach(function (m) {
+        var o = { kind: 'moon', mass: m.mass, r: m.r, w: m.w, a0: Math.random() * 2 * Math.PI }, p = orbit(h, o, 0);
+        o.body = h.body(o, p[0], p[1], null, m.rad, 'kinematic'); h.pfs.moons.push(o); grav.moons.push({ r: m.r, w: m.w, a0: o.a0, rad: m.rad, k: m.k });
+      });
+      // buoy 1 sits a quarter turn around the planet from the start corner, so the straight line from the start misses the planet
+      var dd = [corner[0] - ctr[0], corner[1] - ctr[1]], ll = Math.hypot(dd[0], dd[1]), sg = Math.random() < .5 ? 1 : -1, bu1 = [ctr[0] - sg * dd[1] / ll * 520, ctr[1] + sg * dd[0] / ll * 520];
+      var starts = h.cornerStarts(corner, bu1, n), cells = h.freeCells(starts, function (x, y) { return Math.hypot(x - ctr[0], y - ctr[1]) > PLANET.rad + 150 && Math.hypot(x - bu1[0], y - bu1[1]) > 100; });
+      var bpos = [bu1]; // each next buoy lies somewhere in the half-plane on the far side of the planet from the previous one (90 to 270 degrees round it)
+      for (var bi = 1; bi < NB; bi++) {
+        var pv = bpos[bi - 1], pa = Math.atan2(pv[1] - ctr[1], pv[0] - ctr[0]), cand = null;
+        for (var tries = 0; tries < 400 && !cand; tries++) {
+          var an = pa + Math.PI / 2 + Math.random() * Math.PI, rr = 250 + Math.random() * 350, c = [ctr[0] + rr * Math.cos(an), ctr[1] + rr * Math.sin(an)];
+          if (c[0] > 60 && c[0] < W - 60 && c[1] > 60 && c[1] < H - 60 && bpos.every(function (b) { return Math.hypot(b[0] - c[0], b[1] - c[1]) > 150; }) && starts.every(function (st) { return Math.hypot(st[0] - c[0], st[1] - c[1]) > 150; })) cand = c;
+        }
+        bpos.push(cand || pick(cells));
+      }
+      bpos.forEach(function (q, j) { h.addBuoy(j + 1, q[0], q[1]); });
+      h.placeShips(names, starts, bu1);
+    },
+    before: function (h) { // each physics step: move the moons along their orbits, then pull ships and projectiles towards the planet and moons
+      var V = h.V, src = [[h.pfs.grav.c[0], h.pfs.grav.c[1], PLANET.k]];
+      h.pfs.moons.forEach(function (m, i) {
+        var p = orbit(h, m, h.time + FIX), c = m.body.GetPosition();
+        m.body.SetLinearVelocity(new V((p[0] / S - c.x) / FIX, (p[1] / S - c.y) / FIX)); src.push([c.x * S, c.y * S, MOONS[i].k]);
+      });
+      var pull = function (body) {
+        var p = body.GetPosition(), x = p.x * S, y = p.y * S, ax = 0, ay = 0, m = body.GetMass();
+        src.forEach(function (g) { var dx = g[0] - x, dy = g[1] - y, d2 = dx * dx + dy * dy + PLANET.soft * PLANET.soft, f = g[2] / (d2 * Math.sqrt(d2)); ax += dx * f; ay += dy * f; });
+        body.ApplyForce(new V(m * ax / S, m * ay / S), body.GetWorldCenter());
+      };
+      h.ships.forEach(function (sh) { if (!sh.dead) pull(sh.body); });
+      h.projectiles.forEach(function (pr) { pull(pr.body); });
+    },
+    init: function (h) { return { grav: h.pfs.grav }; },
+    snapshot: function (h) { var r1 = function (v) { return Math.round(v * 10) / 10; }; return { moons: h.pfs.moons.map(function (m) { var p = m.body.GetPosition(); return [r1(p.x * S), r1(p.y * S)]; }) }; }
+  },
+  client: {
+    accel: function (G, x, y, T) { // gravity (px/s^2) at host time T, same formula as the host uses
+      const g = G.pf.grav; let ax = 0, ay = 0;
+      const add = (bx, by, k) => { const dx = bx - x, dy = by - y, d2 = dx * dx + dy * dy + g.soft * g.soft, f = k / (d2 * Math.sqrt(d2)); ax += dx * f; ay += dy * f; };
+      add(g.c[0], g.c[1], g.planet.k); g.moons.forEach(m => { const a = m.a0 + m.w * T; add(g.c[0] + m.r * Math.cos(a), g.c[1] + m.r * Math.sin(a), m.k); });
+      return [ax, ay];
+    },
+    interp: function (a, b, L) { return { moons: a.moons.map(function (r, i) { return [L(r[0], b.moons[i][0]), L(r[1], b.moons[i][1])]; }) }; },
+    draw: function (G, I) {
+  if (G.pf.grav) { const g = G.pf.grav; ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.1)'; ctx.lineWidth = 1.5 / sc; ctx.setLineDash([6 / sc, 10 / sc]); // orbits, planet, moons
+    g.moons.forEach(m => { circle(g.c[0], g.c[1], m.r); ctx.stroke(); }); ctx.setLineDash([]);
+    const gr = ctx.createRadialGradient(g.c[0] - 25, g.c[1] - 25, 10, g.c[0], g.c[1], g.planet.rad); gr.addColorStop(0, '#6f8fbf'); gr.addColorStop(1, '#0d1a33');
+    ctx.shadowColor = '#7aa6ff'; ctx.shadowBlur = 40; circle(g.c[0], g.c[1], g.planet.rad); ctx.fillStyle = gr; ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(160,190,255,.6)'; ctx.lineWidth = 2; ctx.stroke();
+    I.pf.moons.forEach((m, i) => { circle(m[0], m[1], g.moons[i].rad); ctx.fillStyle = '#556'; ctx.shadowColor = '#aab'; ctx.shadowBlur = 15; ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = '#ccd'; ctx.lineWidth = 2; ctx.stroke();
+      const ex = g.c[0] + .75 * (m[0] - g.c[0]), ey = g.c[1] + .75 * (m[1] - g.c[1]); ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.fillStyle = 'rgba(255,255,255,.45)'; ctx.lineWidth = Math.max(1.5, 1.5 / sc); // pull of planet and moon cancels here
+      circle(ex, ey, 9); ctx.stroke(); circle(ex, ey, 2.5); ctx.fill(); ctx.restore(); }); ctx.restore(); }
+    }
+  }
+});
+})();
+
+// Playfield "Pulsars": three rotating pulsars. Each one fires a pulse out along its axis in both directions at the moment the axis points exactly horizontally or vertically (so at a regular, predictable interval): the pulses are moving walls that fence off parts of the field.
+// A ship the pulse front reaches inside the beam gets one kick along the direction of travel. Nothing else acts on ships: no gravity, no field, and the route preview ignores pulses.
+(function () {
+var K = VOD.K, S = K.S, W = K.W, H = K.H, NB = K.NB, rnd = VOD.u.rnd, pick = VOD.u.pick;
+var SPEED = 420, LIFE = 1.9, BAND = 60, HALFW = 112, KICK = 50, CORE = 28; // pulse front speed (px/s), lifetime (s), thickness of the front and half width of the beam (px), velocity change (px/s) of a hit on the beam's axis, solid core radius
+
+function pulse(p, t) { // the pulse alive at host time t, or null
+  if (t < p.phase) return null;
+  var k = Math.floor((t - p.phase) / p.P), te = p.phase + k * p.P, age = t - te; if (age > LIFE) return null;
+  var th = Math.round((p.th0 + p.w * te) / (Math.PI / 2)) * (Math.PI / 2); return  { ux: Math.cos(th), uy: Math.sin(th), d: SPEED * age, age: age, id: k };
+}
+function hit(p, a, x, y) { // 0 unless the front of pulse a (from pulsar p) is on the point (x, y) now; otherwise the strength 0..1 and the direction of travel
+  var dx = x - p.x, dy = y - p.y, al = dx * a.ux + dy * a.uy, pe = -dx * a.uy + dy * a.ux; if (Math.abs(pe) > HALFW) return null;
+  var d = Math.abs(al); if (d > a.d || d < a.d - BAND) return null;
+  var s = al >= 0 ? 1 : -1; return { k: 1 - (pe / HALFW) * (pe / HALFW), ux: s * a.ux, uy: s * a.uy };
+}
+
+VOD.playfield('pulsars', {
+  label: 'Pulsars', order: 35,
+  host: {
+    hit: hit, // exposed for tests
+    build: function (h, names) {
+      var ctr = [W / 2, H / 2], bu1 = ctr.slice(), corner = pick([[0,0],[W,0],[0,H],[W,H]]), a0 = Math.random() * 2 * Math.PI, periods = [0, 0, 0], i;
+      h.pfs.pulsars = periods.map(function (_, k) { var an = a0 + k * 2 * Math.PI / 3 + rnd(-.2, .2), r = 430 + rnd(-40, 40), Q = Math.PI / 2, th0 = rnd(0, 2 * Math.PI), w = (k % 2 ? -1 : 1) * rnd(.35, .6), n = (th0 + 3 * w) / Q, m = w > 0 ? Math.ceil(n) : Math.floor(n); // it fires each time its rotating axis passes horizontal or vertical
+        return { x: Math.round(ctr[0] + r * Math.cos(an)), y: Math.round(ctr[1] + r * Math.sin(an)), P: Q / Math.abs(w), phase: (m * Q - th0) / w, th0: th0, w: w, seen: -1 }; });
+      h.pfs.pulsars.forEach(function (p) { var core = { kind: 'pulsar', mass: 8 }; core.body = h.body(core, p.x, p.y, null, CORE, 'static'); }); // a solid core: hitting it hurts
+      var starts = h.cornerStarts(corner, bu1, names.length), cells = h.freeCells(starts, function (x, y) { return h.pfs.pulsars.every(function (p) { return Math.hypot(p.x - x, p.y - y) > 140; }); });
+      h.addBuoy(1, bu1[0], bu1[1]); for (i = 2; i <= NB; i++) { var q = pick(cells); h.addBuoy(i, q[0], q[1]); }
+      h.placeShips(names, starts, bu1);
+    },
+    before: function (h) { // every step: announce each new pulse, and kick each ship the front reaches (once per pulse and ship)
+      var V = h.V, ps = h.pfs.pulsars, t = h.time;
+      ps.forEach(function (p, pi) {
+        if (t < p.phase) return;
+        var k = Math.floor((t - p.phase) / p.P); if (k !== p.seen) { p.seen = k; h.events.push({ e: 'pulse', x: p.x, y: p.y }); }
+        var a = pulse(p, t); if (!a) return;
+        h.ships.forEach(function (sh) {
+          if (sh.dead || sh['pu' + pi] === k) return;
+          var q = sh.body.GetPosition(), r = hit(p, a, q.x * S, q.y * S); if (!r) return;
+          sh['pu' + pi] = k; var m = sh.body.GetMass() * KICK * r.k / S; sh.body.ApplyImpulse(new V(r.ux * m, r.uy * m), sh.body.GetWorldCenter());
+          h.events.push({ e: 'pulsehit', i: sh.i, x: Math.round(q.x * S), y: Math.round(q.y * S) });
+        });
+      });
+    },
+    init: function (h) { return { pulsars: h.pfs.pulsars.map(function (p) { return { x: p.x, y: p.y, P: p.P, phase: p.phase, th0: p.th0, w: p.w }; }) }; }
+  },
+  client: {
+    sound: function (e, v, T) { if (e.e === 'pulse') { T.noise(.8, 'bandpass', 200, 700, .9 * v, 0, .25); T.tone(90, 130, .7, 'sawtooth', .1 * v, 0, .2); } else if (e.e === 'pulsehit') { T.noise(.35, 'bandpass', 700, 200, .6 * v, 0, .01); T.tone(130, 90, .3, 'sawtooth', .07 * v, 0, .01); } },
+    fx: function (f, now) { if (f.e !== 'pulsehit') return; const t = (now - f.at) / 500; if (t >= 1) return; ctx.save(); ctx.globalAlpha = 1 - t; ctx.strokeStyle = '#bdf'; ctx.lineWidth = Math.max(3, 3 / sc); circle(f.x, f.y, 25 + 60 * t); ctx.stroke(); ctx.restore(); }, // a ring where a pulse hit a ship
+    draw: function (G, I) {
+      const t = I.th;
+      G.pf.pulsars.forEach(p => {
+        const th = p.th0 + p.w * t, ux = Math.cos(th), uy = Math.sin(th);
+        const a = pulse(p, t); // the pulse front, drawn as two glowing bars moving apart in a straight line along the axis the pulsar had when it fired
+        if (a) for (const s of [1, -1]) { const cx = p.x + s * a.ux * a.d, cy = p.y + s * a.uy * a.d, al = 1 - a.age / LIFE;
+          ctx.save(); ctx.translate(cx, cy); ctx.rotate(Math.atan2(a.uy, a.ux)); const g = ctx.createLinearGradient(-BAND / 2, 0, BAND / 2, 0); g.addColorStop(0, 'rgba(180,220,255,0)'); g.addColorStop(.5, 'rgba(200,230,255,' + (.55 * al) + ')'); g.addColorStop(1, 'rgba(180,220,255,0)');
+          ctx.fillStyle = g; ctx.shadowColor = '#9cf'; ctx.shadowBlur = 25; ctx.fillRect(-BAND / 2, -HALFW, BAND, 2 * HALFW); ctx.restore(); }
+        ctx.save(); ctx.translate(p.x, p.y); // the pulsar: rotating jets show the axis, which is also the timing cue
+        ctx.strokeStyle = 'rgba(160,210,255,.4)'; ctx.lineWidth = 2; ctx.setLineDash([8 / sc, 10 / sc]); ctx.beginPath(); ctx.moveTo(-ux * 140, -uy * 140); ctx.lineTo(ux * 140, uy * 140); ctx.stroke(); ctx.setLineDash([]);
+        for (const s of [1, -1]) { const g = ctx.createLinearGradient(0, 0, s * ux * 90, s * uy * 90); g.addColorStop(0, 'rgba(200,230,255,.8)'); g.addColorStop(1, 'rgba(200,230,255,0)');
+          ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(-uy * 9, ux * 9); ctx.lineTo(s * ux * 90, s * uy * 90); ctx.lineTo(uy * 9, -ux * 9); ctx.closePath(); if (s < 0) { ctx.beginPath(); ctx.moveTo(-uy * 9, ux * 9); ctx.lineTo(-ux * 90, -uy * 90); ctx.lineTo(uy * 9, -ux * 9); ctx.closePath(); } ctx.fill(); }
+        ctx.shadowColor = '#9cf'; ctx.shadowBlur = 35; ctx.fillStyle = '#000'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; circle(0, 0, CORE); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0; ctx.restore();
+      });
+    }
+  }
+});
+})();
+
+// Playfield "Shells": thin concentric rings with gaps, each turning about its own (slightly misaligned) centre, alternately clockwise and counter-clockwise (slowly: 0.06 to 0.16 rad/s).
+// Three rings. Buoy 3 is in the middle; buoys 1 and 5 lie in the outer lane (between the two outer rings), 2 and 4 in the inner lane, each on the far side from the previous one (like Planet).
+(function () {
+var K = VOD.K, S = K.S, W = K.W, H = K.H, NB = K.NB, rnd = VOD.u.rnd, pick = VOD.u.pick;
+var RADII = [140, 270, 400], THICK = 14, GAP = 135, CHUNK = 12 * Math.PI / 180, WALL_MASS = 2; // ring radii, wall thickness and gap width in px; solid arcs are cut into 12 degree pieces for Box2D
+
+function ringArcs(r) { // the solid stretches of a ring (angles in radians from its own zero), leaving 1 or 2 gaps of GAP px
+  var gaps = r < 150 ? 1 : 2, ga = GAP / r, a0 = Math.random() * 2 * Math.PI, seg = 2 * Math.PI / gaps, out = [];
+  for (var g = 0; g < gaps; g++) { var s = a0 + g * seg + ga + rnd(0, .35 * (seg - 2 * ga)), e = a0 + (g + 1) * seg + rnd(-.35, 0) * (seg - 2 * ga); out.push([s, e]); }
+  return out; // [start, end] pairs; the gap lies between one end and the next start
+}
+
+VOD.playfield('shells', {
+  label: 'Shells', order: 25,
+  host: {
+    build: function (h, names) {
+      var b2 = h.b2, V = h.V, ctr = [W / 2, H / 2], corner = pick([[0,0],[W,0],[0,H],[W,H]]), n = names.length, i;
+      h.pfs.rings = [];
+      RADII.forEach(function (r, ri) {
+        var off = [rnd(-10, 10), rnd(-10, 10)], c = [ctr[0] + off[0], ctr[1] + off[1]], w = (ri % 2 ? -1 : 1) * rnd(.06, .16), arcs = ringArcs(r), ring = { kind: 'ring', mass: WALL_MASS };
+        var bd = new b2.Dynamics.b2BodyDef(); bd.type = b2.Dynamics.b2Body.b2_kinematicBody; bd.position.Set(c[0] / S, c[1] / S); bd.userData = ring; ring.body = h.world.CreateBody(bd);
+        arcs.forEach(function (ar) {
+          var pieces = Math.max(1, Math.ceil((ar[1] - ar[0]) / CHUNK));
+          for (var k = 0; k < pieces; k++) {
+            var s = ar[0] + (ar[1] - ar[0]) * k / pieces, e = ar[0] + (ar[1] - ar[0]) * (k + 1) / pieces, ro = r + THICK / 2, rin = r - THICK / 2;
+            var fd = new b2.Dynamics.b2FixtureDef(); fd.shape = new b2.Collision.Shapes.b2PolygonShape(); fd.friction = .2; fd.restitution = .5;
+            fd.shape.SetAsArray([[rin, s], [ro, s], [ro, e], [rin, e]].map(function (q) { return new V(q[0] * Math.cos(q[1]) / S, q[0] * Math.sin(q[1]) / S); }), 4);
+            ring.body.CreateFixture(fd);
+          }
+        });
+        ring.body.SetAngularVelocity(w); ring.def = { c: c, r: r, th: THICK, arcs: arcs }; h.pfs.rings.push(ring);
+      });
+      // buoy 1 in the outer lane, towards the start corner: the ships approach it head-on, with plenty of room before the first ring
+      var lane = [(RADII[0] + RADII[1]) / 2, (RADII[1] + RADII[2]) / 2], ca = Math.atan2(corner[1] - ctr[1], corner[0] - ctr[0]) + rnd(-.4, .4);
+      var bu1 = [ctr[0] + lane[1] * Math.cos(ca), ctr[1] + lane[1] * Math.sin(ca)], starts = h.cornerStarts(corner, bu1, n), bpos = [bu1];
+      var place = function (prev, r) { // in the lane of radius r, on the far side of the previous buoy (anywhere when the previous one is the centre)
+        var pa = prev ? Math.atan2(prev[1] - ctr[1], prev[0] - ctr[0]) : 0, best = null;
+        for (var tries = 0; tries < 300; tries++) {
+          var an = prev ? pa + Math.PI / 2 + Math.random() * Math.PI : Math.random() * 2 * Math.PI, c = [ctr[0] + r * Math.cos(an), ctr[1] + r * Math.sin(an)];
+          best = c; if (bpos.every(function (b) { return Math.hypot(b[0] - c[0], b[1] - c[1]) > 150; })) break;
+        }
+        return best;
+      };
+      bpos.push(place(bu1, lane[0])); bpos.push(ctr.slice()); bpos.push(place(null, lane[0])); bpos.push(place(bpos[3], lane[1])); // buoys 1 (outer lane), 2 (inner), 3 (centre), 4 (inner), 5 (outer)
+      bpos.forEach(function (q, j) { h.addBuoy(j + 1, q[0], q[1]); });
+      h.placeShips(names, starts, bu1);
+    },
+    init: function (h) { return { rings: h.pfs.rings.map(function (r) { return r.def; }) }; },
+    snapshot: function (h) { return { rings: h.pfs.rings.map(function (r) { return Math.round(r.body.GetAngle() * 1000) / 1000; }) }; }
+  },
+  client: {
+    interp: function (a, b, L, ang) { return { rings: a.rings.map(function (v, i) { return ang(v, b.rings[i]); }) }; },
+    draw: function (G, I) { // each ring: a white glowing outline, then black over it, so it reads like the rocks
+      G.pf.rings.forEach((rg, i) => {
+        const a = I.pf.rings[i]; ctx.save(); ctx.translate(rg.c[0], rg.c[1]); ctx.lineCap = 'round';
+        const arcs = () => rg.arcs.forEach(ar => { ctx.beginPath(); ctx.arc(0, 0, rg.r, ar[0] + a, ar[1] + a); ctx.stroke(); });
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = rg.th + 4; ctx.shadowColor = 'darkgrey'; ctx.shadowBlur = 20; arcs(); ctx.shadowBlur = 0; ctx.strokeStyle = '#000'; ctx.lineWidth = rg.th - 3; arcs(); ctx.restore();
+      });
+    }
+  }
+});
+})();
+
+// ---------- sound: every effect is synthesised with Web Audio (no audio files) ----------
+// sfx(e) is called with each host event. Core events are handled below; weapon events by the weapon's client.sound(e, v, T) (v: volume 0..1 by distance, T: { tone, noise }).
+const SND = { ctx: null, master: null, on: true, last: {}, noise: null };
+try { SND.on = localStorage.getItem('vodSound') !== '0'; } catch (_) {}
+function sndInit() { // browsers only allow audio after a tap or key press: called from those events
+  if (SND.ctx) { if (SND.ctx.state === 'suspended') SND.ctx.resume(); return; }
+  const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+  try {
+    const c = SND.ctx = new AC(), comp = c.createDynamicsCompressor(); SND.master = c.createGain(); SND.master.gain.value = .8; SND.master.connect(comp); comp.connect(c.destination);
+    const buf = c.createBuffer(1, c.sampleRate, c.sampleRate), d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; SND.noise = buf;
+  } catch (_) { SND.ctx = null; }
+}
+['pointerdown', 'keydown', 'touchstart'].forEach(t => addEventListener(t, sndInit, { passive: true }));
+function envelope(g, t, vol, dur, att = .008) { g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(.0002, vol), t + att); g.gain.exponentialRampToValueAtTime(.0001, t + dur); }
+const T = {
+  tone(f0, f1, dur, type, vol, delay = 0, att = .008) { // an oscillator gliding from f0 to f1 Hz
+    const c = SND.ctx, t = c.currentTime + delay, o = c.createOscillator(), g = c.createGain(); o.type = type; o.frequency.setValueAtTime(f0, t); if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    envelope(g, t, vol, dur, att); o.connect(g); g.connect(SND.master); o.start(t); o.stop(t + dur + .03);
+  },
+  noise(dur, kind, f0, f1, vol, delay = 0, att = .008) { // filtered noise ('lowpass' | 'highpass' | 'bandpass') with the filter sweeping from f0 to f1 Hz
+    const c = SND.ctx, t = c.currentTime + delay, s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain(); s.buffer = SND.noise; s.loop = true; f.type = kind; f.Q.value = kind === 'bandpass' ? 2 : .7;
+    f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + dur); envelope(g, t, vol, dur, att); s.connect(f); f.connect(g); g.connect(SND.master); s.start(t, Math.random() * .5); s.stop(t + dur + .03);
+  }
+};
+const CORE_SOUNDS = {
+  fire: (e, v) => { // a thrust fires: the "engine pulse" - a triangle wave sinking from 100 to 35 Hz, dropping fast and then fading out over 0.4 s (from sounds-2.html)
+    const c = SND.ctx, t = c.currentTime, p = Math.min(1, .5 + .5 * Math.min(1.2, Math.hypot(e.x, e.y) / 100)), o = c.createOscillator(), g = c.createGain(), A = .6 * v * p;
+    o.type = 'triangle'; o.frequency.setValueAtTime(100, t); o.frequency.exponentialRampToValueAtTime(35, t + .35);
+    g.gain.setValueAtTime(A, t); g.gain.exponentialRampToValueAtTime(A / 6, t + .1); g.gain.exponentialRampToValueAtTime(.001, t + .4);
+    o.connect(g); g.connect(SND.master); o.start(t); o.stop(t + .4); },
+  hit: (e, v) => { const k = Math.min(1, (e.d || 10) / 40); T.noise(.2, 'bandpass', 1200, 350, (.5 + .8 * k) * v, 0, .004); T.tone(210, 150, .14, 'sawtooth', (.12 + .2 * k) * v); T.tone(330, 300, .1, 'square', .08 * v); }, // collision or weapon damage
+  boom: (e, v) => { T.noise(1.4, 'lowpass', 1800, 120, 1.2 * v, 0, .03); T.tone(80, 45, 1.2, 'sawtooth', .22 * v, 0, .04); T.tone(500, 90, .6, 'sawtooth', .12 * v); }, // a ship destroyed: crack, then a rumble
+  blast: (e, v) => { T.noise(.9, 'lowpass', 1800, 90, 1 * v, 0, .02); T.tone(90, 50, .7, 'sawtooth', .2 * v, 0, .03); }, // missile or mine explosion
+  respawn: (e, v) => { [330, 440, 660].forEach((f, i) => T.tone(f, f, .2, 'triangle', .4 * v, i * .08)); },
+  buoy: (e, v) => { T.tone(880, 880, .4, 'sine', .3 * v); T.tone(1320, 1320, .55, 'sine', .25 * v, .09); },
+  win: () => { [523, 659, 784, 1047].forEach((f, i) => T.tone(f, f, i === 3 ? 1 : .25, 'triangle', .3, i * .16)); T.tone(262, 262, 1.2, 'sine', .15, .48); }, // the race is over
+  nofire: (e, v) => { T.tone(180, 140, .18, 'square', .12 * v, 0, .02); }, // the weapon would not fire
+  arm: () => { T.tone(660, 880, .07, 'square', .15); }, disarm: () => { T.tone(660, 440, .07, 'square', .15); }
+};
+function sfx(e) {
+  if (!SND.on || !SND.ctx || SND.ctx.state !== 'running' || !G) return;
+  const now = performance.now(); if (now - (SND.last[e.e] || 0) < 40 && e.e !== 'win') return; SND.last[e.e] = now;
+  let v = 1; // louder when it concerns me, fainter with distance otherwise
+  if (e.i !== me && e.e !== 'win' && e.e !== 'arm' && e.e !== 'disarm' && snaps.length) {
+    const s = latest(), mine = s.ships[me], at = e.x != null ? [e.x, e.y] : e.i != null && s.ships[e.i] && !s.ships[e.i].hid ? [s.ships[e.i].x, s.ships[e.i].y] : null;
+    v = at ? Math.max(.2, Math.min(1, 1 / (1 + Math.hypot(at[0] - mine.x, at[1] - mine.y) / 500))) * .85 : .4;
+  }
+  if (e.e === 'nofire' && e.i !== me) return;
+  try { if (CORE_SOUNDS[e.e]) CORE_SOUNDS[e.e](e, v); else { const pc = PFC(); AW().forEach(wc => { if (wc.sound) wc.sound(e, v, T); }); if (pc.sound) pc.sound(e, v, T); } } catch (_) {}
+}
+const setSndLabel = () => { $('bsnd').textContent = SND.on ? 'Sound' : 'Muted'; };
+$('bsnd').onclick = () => { sndInit(); SND.on = !SND.on; try { localStorage.setItem('vodSound', SND.on ? '1' : '0'); } catch (_) {} setSndLabel(); };
+setSndLabel();
+
+// ---- alternates (from sounds-2.html, "Audio Playground") ----
+const out = () => SND.master;
+const altEnginePulse = (e, v) => { const c = SND.ctx, now = c.currentTime, osc = c.createOscillator(), gain = c.createGain(); osc.type = 'triangle'; osc.frequency.setValueAtTime(100, now); osc.frequency.exponentialRampToValueAtTime(35, now + .35);
+  gain.gain.setValueAtTime(.6 * v, now); gain.gain.exponentialRampToValueAtTime(.1 * v, now + .1); gain.gain.exponentialRampToValueAtTime(.001, now + .4); osc.connect(gain); gain.connect(out()); osc.start(now); osc.stop(now + .4); };
+const altLaser = (e, v) => { const c = SND.ctx, now = c.currentTime, osc = c.createOscillator(), gain = c.createGain(); osc.type = 'sine'; osc.frequency.setValueAtTime(1200, now); osc.frequency.exponentialRampToValueAtTime(300, now + .08);
+  gain.gain.setValueAtTime(.25 * v, now); gain.gain.exponentialRampToValueAtTime(.001, now + .08); osc.connect(gain); gain.connect(out()); osc.start(now); osc.stop(now + .08); };
+const altExplosion = (e, v) => { const c = SND.ctx, now = c.currentTime, dur = .8, src = c.createBufferSource(); src.buffer = SND.noise; src.loop = true;
+  const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(400, now); lp.frequency.exponentialRampToValueAtTime(20, now + dur);
+  const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.setValueAtTime(8000, now); hp.frequency.exponentialRampToValueAtTime(1000, now + .15);
+  const mg = c.createGain(); mg.gain.setValueAtTime(.7 * v, now); mg.gain.exponentialRampToValueAtTime(.001, now + dur); const cg = c.createGain(); cg.gain.setValueAtTime(.3 * v, now); cg.gain.exponentialRampToValueAtTime(.001, now + .15);
+  src.connect(lp); lp.connect(mg); mg.connect(out()); src.connect(hp); hp.connect(cg); cg.connect(out()); src.start(now); src.stop(now + dur); };
+const altDing = (e, v) => { const c = SND.ctx, now = c.currentTime, o1 = c.createOscillator(), o2 = c.createOscillator(), g = c.createGain(); o1.type = o2.type = 'sine'; o1.frequency.value = 587.33; o2.frequency.value = 880;
+  g.gain.setValueAtTime(.2 * v, now); g.gain.exponentialRampToValueAtTime(.001, now + .6); o1.connect(g); o2.connect(g); g.connect(out()); o1.start(now); o2.start(now); o1.stop(now + .6); o2.stop(now + .6); };
+const wsound = (id, ev) => (e, v) => VOD.weapons[id].client.sound(e, v, T);
+const psound = (id) => (e, v) => VOD.playfields[id].client.sound(e, v, T);
+// [group, name, when it plays, event, current, alternates: [[label, fn]]]
+const ROWS = [
+  ['Ship', 'Thrust', 'every 3 s, when a planned thrust fires (louder for bigger thrusts)', { e: 'fire', x: 100, y: 0 }, CORE_SOUNDS.fire, [['Engine pulse', altEnginePulse]]],
+  ['Ship', 'Hit', 'collision or weapon damage', { e: 'hit', d: 30 }, CORE_SOUNDS.hit, []],
+  ['Ship', 'Destroyed', 'a ship loses all its hull', { e: 'boom' }, CORE_SOUNDS.boom, [['Explosion', altExplosion]]],
+  ['Ship', 'Respawn', 'the ship comes back', { e: 'respawn' }, CORE_SOUNDS.respawn, []],
+  ['Race', 'Buoy reached', 'you (or somebody near) reach the next buoy', { e: 'buoy' }, CORE_SOUNDS.buoy, [['Milestone ding', altDing]]],
+  ['Race', 'Race over', 'a player wins', { e: 'win' }, CORE_SOUNDS.win, []],
+  ['Controls', 'Weapon would not fire', 'out of range, no line of sight, ...', { e: 'nofire' }, CORE_SOUNDS.nofire, []],
+  ['Controls', 'Arm', 'Fire pressed on a targeted weapon', { e: 'arm' }, CORE_SOUNDS.arm, []],
+  ['Controls', 'Disarm', 'Fire pressed again', { e: 'disarm' }, CORE_SOUNDS.disarm, []],
+  ['Weapons', 'Explosion (missile / mine)', 'a blast', { e: 'blast' }, CORE_SOUNDS.blast, [['Explosion', altExplosion]]],
+  ['Weapons', 'Gun', 'a shot', { e: 'shot' }, wsound('gun'), []],
+  ['Weapons', 'Missile launch', '', { e: 'launch' }, wsound('missile'), []],
+  ['Weapons', 'Mine dropped', '', { e: 'drop' }, wsound('mine'), []],
+  ['Weapons', 'Hammer out', '', { e: 'deploy' }, wsound('hammer'), []],
+  ['Weapons', 'Hammer in', '', { e: 'retract' }, wsound('hammer'), []],
+  ['Weapons', 'Hammer hit', '', { e: 'bonk' }, wsound('hammer'), []],
+  ['Weapons', 'Harpoon', '', { e: 'harpoon' }, wsound('harpoon'), []],
+  ['Playfields', 'Pulsar pulse', 'a pulsar fires', { e: 'pulse' }, psound('pulsars'), []],
+  ['Playfields', 'Pulse hits a ship', 'a small, reversed pulse', { e: 'pulsehit' }, psound('pulsars'), []],
+];
+const vol = () => +$('vol').value, dist = () => +$('dist').value;
+function play(fn, e) { sndInit(); const go = () => { SND.master.gain.value = vol(); try { fn(e, dist()); } catch (x) { console.error(x); } }; if (SND.ctx.state === 'suspended') SND.ctx.resume().then(go); else go(); }
+const list = document.getElementById('list'); let grp = '';
+ROWS.forEach(r => {
+  if (r[0] !== grp) { grp = r[0]; const h = document.createElement('h2'); h.textContent = grp; list.appendChild(h); }
+  const d = document.createElement('div'); d.className = 'row'; d.innerHTML = '<div><div class="nm"></div><div class="ds"></div></div><div class="bt"></div>';
+  d.querySelector('.nm').textContent = r[1]; d.querySelector('.ds').textContent = r[2];
+  const bt = d.querySelector('.bt'), add = (t, cls, f) => { const b = document.createElement('button'); b.textContent = t; b.className = cls; b.onclick = f; bt.appendChild(b); };
+  add('Current', '', () => play(r[4], r[3]));
+  r[5].forEach(a => { add(a[0], 'alt', () => play(a[1], r[3])); add('Current, then ' + a[0], 'ab', () => { play(r[4], r[3]); setTimeout(() => play(a[1], r[3]), 1300); }); });
+  list.appendChild(d);
+});
+</script></body></html>

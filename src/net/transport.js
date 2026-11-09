@@ -42,7 +42,12 @@ function relayConfig() {
   const base = /^https:/.test(a) ? a.replace(/^https:/, 'wss:') : /^http:/.test(a) ? a.replace(/^http:/, 'ws:') : /^wss?:/.test(a) ? a : 'wss://' + a;
   return { base, key, host: base.replace(/^wss?:\/\//, '') };
 }
-const GIVE_UP = 90000; // ms of trying to get the relay back before the page says the connection is lost
+const RELAY_PROTOCOL = 2; // the relay protocol this page speaks (PROTOCOL in relay/room-core.mjs); an older relay still works, without the extras
+const GIVE_UP = 90000;    // ms of trying to get the relay back before the page says the connection is lost
+const PING_EVERY = 5000;  // keepalive; the relay answers it without waking up
+const DEAD_AFTER = 15000; // nothing heard this long while the page is visible: the connection is dead even if the browser thinks it is open
+const PROBE_WAIT = 4000;  // after waking up (tab visible, focus, network back): ping, and reconnect unless something arrives this soon
+const STALE_ACTION = 3000; // a fire / detonate request that had to wait for the connection longer than this is dropped rather than sent late
 class RelayConn {
   constructor(p, remote, cid) { this.p = p; this.peer = remote; this.cid = cid; this.h = {}; }
   on(e, f) { (this.h[e] = this.h[e] || []).push(f); return this; }
@@ -51,46 +56,77 @@ class RelayConn {
   close() {}
 }
 class RelayPeer {
-  // Resilient: the WebSocket is opened again whenever it drops (same peer id, so the logical connections carry on), with backoff; messages sent
-  // meanwhile wait in a queue (snapshots are not queued: they would be stale); a silent socket is detected by missing replies to the pings.
-  // Events: 'open' (first registration), 'reconnecting', 'reconnected', 'disconnected' (gave up after GIVE_UP ms), 'error'.
+  // Resilient: the WebSocket is opened again whenever it drops (same peer id, so the logical connections carry on), with backoff and some jitter. A private resume token lets
+  // the relay hand the id over to the new connection at once, even if it has not yet noticed the old one die. Messages sent meanwhile wait in a queue (snapshots are not
+  // queued, and fire / detonate requests that waited too long are dropped). A dead socket that still looks open is found by missing replies to the pings, and when the tab
+  // wakes up a ping checks the connection at once. When connecting keeps failing, the relay's /check explains why in plain words ('problem' event).
+  // Events: 'open' (first registration), 'reconnecting', 'reconnected', 'disconnected' (gave up after GIVE_UP ms), 'problem' (text), 'error'.
   constructor(id, cfg) { // cfg: { base, key, room }
     this.h = {}; this.conns = {}; this.up = false; this.everUp = false; this.failed = false; this.closed = false; this.cfg = cfg; this.q = []; this.tries = 0; this.lostAt = 0; this.lastRx = Date.now(); this.flagged = false;
     this.id = id || 'r' + Math.random().toString(36).slice(2, 9);
-    this.open();
-    this.ka = setInterval(() => this.watch(), 4000);
-    this.wake = () => { if (!this.up && !this.closed && !this.failed && (!this.ws || this.ws.readyState > 1 || this.wait)) { clearTimeout(this.rt); this.wait = false; this.open(); } };
-    addEventListener('online', this.wake); document.addEventListener('visibilitychange', this.wake);
+    this.tok = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(36).padStart(2, '0')).join('').slice(0, 20); // only this page knows it
+    this.protocol = 0; this.open();
+    this.ka = setInterval(() => this.watch(), PING_EVERY);
+    this.wake = () => { if (this.closed || this.failed || (document.visibilityState && document.visibilityState !== 'visible')) return;
+      if (this.up) this.probe(); else if (!this.ws || this.ws.readyState > 1 || this.wait) { clearTimeout(this.rt); this.wait = false; this.open(); } };
+    addEventListener('online', this.wake); addEventListener('focus', this.wake); document.addEventListener('visibilitychange', this.wake);
   }
   on(e, f) { (this.h[e] = this.h[e] || []).push(f); return this; }
   emit(e, ...a) { (this.h[e] || []).slice().forEach(f => f(...a)); }
   open() {
     if (this.closed || this.failed) return; this.wait = false; let ws;
     try { ws = this.ws = new WebSocket(this.cfg.base + '/' + this.cfg.room, ['vodjs-relay', 'k.' + b64url(this.cfg.key)]); } catch (_) { this.lost(); return; }
-    clearTimeout(this.at); this.at = setTimeout(() => { if (this.ws === ws && !this.up) { ws.onclose = null; try { ws.close(); } catch (_) {} this.lost(); } }, 6000); // an attempt that never registers is dropped and retried
-    ws.onopen = () => { try { ws.send(JSON.stringify({ t: 'hi', id: this.id })); } catch (_) {} };
+    clearTimeout(this.at); this.at = setTimeout(() => { if (this.ws === ws && !this.up) this.drop(ws); }, 6000); // an attempt that never registers is dropped and retried
+    ws.onopen = () => { try { ws.send(JSON.stringify({ t: 'hi', id: this.id, tok: this.tok })); } catch (_) {} };
     ws.onmessage = e => { this.lastRx = Date.now(); let m; try { m = JSON.parse(e.data); } catch (_) { return; } this.recv(m); };
     ws.onclose = () => { if (this.ws === ws) this.lost(); };
   }
+  drop(ws) { ws.onclose = null; try { ws.close(); } catch (_) {} if (this.ws === ws) this.lost(); }
   lost() { // the socket closed, or never worked: try again unless we are out of patience
     clearTimeout(this.at); if (this.closed || this.failed) return;
-    const was = this.up; this.up = false; this.tries++;
-    if (!this.everUp) { if (this.tries >= 3) { this.failed = true; this.emit('error', { type: 'relay-refused' }); return; } }
+    this.up = false; this.tries++;
+    if (this.tries === 2) this.diagnose();
+    if (!this.everUp) { if (this.tries >= 3) { this.failed = true; this.diagnose().then(problem => this.emit('error', { type: 'relay-refused', problem })); return; } }
     else { if (!this.lostAt) this.lostAt = Date.now(); if (!this.flagged) { this.flagged = true; this.emit('reconnecting'); }
       if (Date.now() - this.lostAt > GIVE_UP) { this.failed = true; this.emit('disconnected'); return; } }
-    const delay = Math.min(5000, 400 * Math.pow(2, Math.min(this.tries - 1, 4))); this.wait = true; clearTimeout(this.rt); this.rt = setTimeout(() => this.open(), delay);
+    const delay = Math.min(5000, 400 * Math.pow(2, Math.min(this.tries - 1, 4))) + Math.random() * 400; this.wait = true; clearTimeout(this.rt); this.rt = setTimeout(() => this.open(), delay);
   }
-  watch() { // every 4 s: ping, and treat a relay that has been silent for 20 s as gone
+  watch() { // every PING_EVERY: ping, and (while the page is visible; hidden tabs have throttled timers) treat a relay silent for DEAD_AFTER as gone
     if (!this.up || this.closed) return;
-    if (Date.now() - this.lastRx > 20000) { const ws = this.ws; ws.onclose = null; try { ws.close(); } catch (_) {} this.lost(); return; }
-    if (this.ws.readyState === 1) { try { this.ws.send('{"t":"ping"}'); } catch (_) {} }
+    const visible = !document.visibilityState || document.visibilityState === 'visible';
+    if (visible && Date.now() - this.lastRx > DEAD_AFTER) { this.drop(this.ws); return; }
+    this.ping();
+  }
+  ping() { if (this.ws && this.ws.readyState === 1) { try { this.ws.send('{"t":"ping"}'); } catch (_) {} } } // exactly this text: the relay answers it without waking up
+  probe() { // is the connection really alive? ping, and reconnect unless something arrives soon
+    if (!this.up || this.probing) return; const since = Date.now(), ws = this.ws; this.probing = true; this.ping();
+    setTimeout(() => { this.probing = false; if (this.ws === ws && this.up && this.lastRx < since) this.drop(ws); }, PROBE_WAIT);
+  }
+  async diagnose() { // why does connecting fail? in words a player can act on (needs a relay with /check; protocol 2)
+    if (this.diag) return this.diag;
+    this.diag = (async () => {
+      const http = this.cfg.base.replace(/^ws/, 'http'); let problem;
+      if (location.protocol === 'https:' && this.cfg.base.startsWith('ws:')) problem = 'this secure page cannot use the insecure relay address ' + this.cfg.host + '; use its https address';
+      else if (navigator.onLine === false) problem = 'this device is offline';
+      else try {
+        const r = await fetch(http + '/check', { headers: { 'X-Relay-Key': b64url(this.cfg.key) }, cache: 'no-store' }); let j = null; try { j = await r.json(); } catch (_) {}
+        if (!j || j.service !== 'vod-relay') problem = 'something answers at ' + this.cfg.host + ', but it is not an up-to-date VoD relay: check the relay= part of the address, or redeploy the relay';
+        else if (j.key === 'wrong' || j.key === 'missing') problem = 'the relay rejected the secret: check the #key= part of the address';
+        else if (j.key === 'not-set') problem = 'the relay has no secret set (wrangler secret put RELAY_SECRET)';
+        else if (j.protocol > RELAY_PROTOCOL) problem = 'the relay is newer than this page: reload the page';
+        else problem = 'the relay is reachable, but the live connection fails: this network may block WebSockets (try another one, e.g. mobile data)';
+      } catch (_) { problem = 'cannot reach the relay at ' + this.cfg.host + ': check the relay= part of the address and the network'; }
+      setTimeout(() => { this.diag = null; }, 20000); // look again later if it still fails
+      if (!this.up) this.emit('problem', problem); return problem;
+    })();
+    return this.diag;
   }
   recv(m) {
-    if (m.t === 'ok') { const again = this.everUp; this.up = true; this.everUp = true; this.tries = 0; this.lostAt = 0; clearTimeout(this.at);
+    if (m.t === 'ok') { const again = this.everUp; this.up = true; this.everUp = true; this.tries = 0; this.lostAt = 0; this.protocol = m.protocol || 1; clearTimeout(this.at);
       if (again) { this.flagged = false; this.flush(); this.emit('reconnected'); } else this.emit('open', this.id); }
     else if (m.t === 'err') {
       if (m.type === 'peer-unavailable') { const c = Object.values(this.conns).find(c => c.timer && c.peer === m.to); if (c) { clearTimeout(c.timer); c.timer = null; this.emit('error', { type: 'peer-unavailable' }); } } // only matters while connecting to someone
-      else if (m.type === 'unavailable-id' && (this.everUp || this.tries > 0)) { const ws = this.ws; ws.onclose = null; try { ws.close(); } catch (_) {} this.lost(); } // our own earlier socket is probably still registered on the relay: try again shortly
+      else if (m.type === 'unavailable-id' && (this.everUp || this.tries > 0)) this.drop(this.ws); // our own old socket is probably still registered (an older relay without resume tokens): try again shortly
       else { this.failed = true; this.emit('error', { type: m.type }); } }
     else if (m.t === 'from') this.inner(m.from, m.d);
   }
@@ -102,13 +138,13 @@ class RelayPeer {
   }
   send(to, d) {
     if (this.up && this.ws.readyState === 1) { try { this.ws.send(JSON.stringify({ t: 'to', to, d })); return; } catch (_) {} }
-    if (!(d && d.t === 'data' && d.d && d.d.t === 'snap') && this.q.length < 300) this.q.push([to, d]); // everything but snapshots waits for the connection to come back
+    if (!(d && d.t === 'data' && d.d && d.d.t === 'snap') && this.q.length < 300) this.q.push([to, d, Date.now()]); // everything but snapshots waits for the connection to come back
   }
-  flush() { const q = this.q; this.q = []; q.forEach(x => this.send(x[0], x[1])); }
+  flush() { const q = this.q, now = Date.now(); this.q = []; q.forEach(x => { const t = x[1] && x[1].d && x[1].d.t; if ((t === 'fire' || t === 'detonate') && now - x[2] > STALE_ACTION) return; this.send(x[0], x[1]); }); }
   connect(to) {
     const cid = Math.random().toString(36).slice(2), c = new RelayConn(this, to, cid); this.conns[cid] = c;
     c.timer = setTimeout(() => { c.timer = null; this.emit('error', { type: 'peer-unavailable' }); }, 6000);
     this.send(to, { t: 'connect', cid }); return c;
   }
-  destroy() { this.closed = true; clearInterval(this.ka); clearTimeout(this.rt); clearTimeout(this.at); removeEventListener('online', this.wake); document.removeEventListener('visibilitychange', this.wake); try { this.ws.close(); } catch (_) {} }
+  destroy() { this.closed = true; clearInterval(this.ka); clearTimeout(this.rt); clearTimeout(this.at); removeEventListener('online', this.wake); removeEventListener('focus', this.wake); document.removeEventListener('visibilitychange', this.wake); try { this.ws.close(); } catch (_) {} }
 }
